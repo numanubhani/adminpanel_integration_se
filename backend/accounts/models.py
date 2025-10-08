@@ -90,3 +90,21 @@ class BodyPartImage(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.body_part}"
+
+
+class Admin(models.Model):
+    """
+    Admin model that uses Profile (contributor) model via OneToOne relationship.
+    Has all contributor fields through profile + is_admin flag.
+    """
+    profile = models.OneToOneField(Profile, on_delete=models.CASCADE, related_name="admin_profile")
+    is_admin = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"Admin: {self.profile.user.email}"
+    
+    class Meta:
+        verbose_name = "Admin"
+        verbose_name_plural = "Admins"

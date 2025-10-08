@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage
+from .models import Profile, Payment, BodyPartImage, Admin
 
 
 # ── Register (role-aware)
@@ -274,3 +274,20 @@ class BodyPartImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = BodyPartImage
         fields = ["id", "body_part", "image", "created_at"]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ADMIN SERIALIZERS
+# ══════════════════════════════════════════════════════════════════════
+
+class AdminSerializer(serializers.ModelSerializer):
+    """
+    Admin serializer for responses - shows email, screen name, and admin status.
+    """
+    email = serializers.EmailField(source='profile.user.email', read_only=True)
+    screen_name = serializers.CharField(source='profile.screen_name', read_only=True, required=False)
+    
+    class Meta:
+        model = Admin
+        fields = ['id', 'email', 'screen_name', 'is_admin', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'email', 'screen_name', 'is_admin', 'created_at', 'updated_at']

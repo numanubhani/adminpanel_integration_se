@@ -1,12 +1,11 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password
-from rest_framework import status, generics, permissions
+from rest_framework import status, generics, permissions, viewsets, decorators
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
-from rest_framework import viewsets
 from .models import BodyPartImage
 from .serializers import BodyPartImageSerializer
 
@@ -17,8 +16,9 @@ from .serializers import (
     UserRegisterSerializer,
     ContributorRegisterSerializer,
     AddFundsSerializer,
+    AdminSerializer,
 )
-from .models import Profile, Payment
+from .models import Profile, Payment, Admin
 
 
 @api_view(["POST"])
@@ -73,10 +73,14 @@ def login(request):
     email = request.data.get("email", "").lower()
     password = request.data.get("password", "")
 
+    # Try to find user by email or username
     try:
-        user = User.objects.get(username=email)
+        user = User.objects.get(email=email)
     except User.DoesNotExist:
-        return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            user = User.objects.get(username=email)
+        except User.DoesNotExist:
+            return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
     # ✅ Simple password check
     if not check_password(password, user.password):
@@ -138,30 +142,32 @@ def register_user(request):
             value={
                 "email": "contrib@example.com",
                 "password": "secret123",
-                "screen_name": "creator1",
-                "creator_pathway": "photography",
-                "first_name": "John",
-                "last_name": "Doe",
-                "phone_number": "+123456789",
+                "screenName": "creator1",
+                "creatorPathway": "photography",
+                "firstName": "John",
+                "lastName": "Doe",
+                "phoneNumber": "+123456789",
                 "address": "123 Main St",
                 "city": "NYC",
                 "state": "NY",
-                "zip_code": "10001",
+                "zipCode": "10001",
                 "country": "US",
-                "name_visibility": "public",
-                "is_over_18": True,
+                "countryResidence": "US",
+                "nationality": "American",
+                "occupation": "Photographer",
+                "nameVisibility": "public",
+                "isOver18": True,
                 "bio": "Sample bio",
+                "dateOfBirth": "1990-01-01",
+                "age": 35,
                 "gender": "Male",
                 "height": "5'10\"",
                 "weight": "170",
-                "shoe_size": "10.5",
-                "skin_tone": "Medium",
-                "hair_color": "Brown",
-                "country_residence": "US",
-                "nationality": "American",
-                "occupation": "Photographer",
-                "body_type": "Athletic/Average",
-                "penis_length": "6-7.5",
+                "shoeSize": "10.5",
+                "skinTone": "Medium",
+                "hairColor": "Brown",
+                "bodyType": "Athletic/Average",
+                "penisLength": "6-7.5",
             },
         )
     ],
@@ -247,4 +253,180 @@ class BodyPartImageViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ADMIN VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class AdminViewSet(viewsets.ModelViewSet):
+    """
+    Admin ViewSet with register and login actions.
+    Simple admin management with email/password authentication.
+    """
+    queryset = Admin.objects.all().select_related('profile__user')
+    serializer_class = AdminSerializer
+    permission_classes = [AllowAny]  # We'll handle permissions per action
+    
+    @extend_schema(
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email'},
+                    'password': {'type': 'string'}
+                },
+                'required': ['email', 'password'],
+                'example': {
+                    'email': 'admin@example.com',
+                    'password': 'admin123456'
+                }
+            }
+        },
+        responses={200: AdminSerializer}
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='login')
+    def login(self, request):
+        """
+        Admin login with email and password.
+        Returns JWT tokens and admin details.
+        """
+        email = request.data.get('email', '').lower()
+        password = request.data.get('password', '')
+        
+        if not email or not password:
+            return Response(
+                {'error': 'Email and password are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find user (check both email and username fields)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Try username field if email field doesn't work
+            try:
+                user = User.objects.get(username=email)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Invalid credentials'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+        
+        # Check password
+        if not check_password(password, user.password):
+            return Response(
+                {'error': 'Invalid credentials'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Check if user has admin profile
+        try:
+            admin = Admin.objects.get(profile__user=user)
+            if not admin.is_admin:
+                return Response(
+                    {'error': 'Not an admin account'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except Admin.DoesNotExist:
+            return Response(
+                {'error': 'Not an admin account'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Generate JWT tokens
+        refresh = RefreshToken.for_user(user)
+        
+        try:
+            admin_data = AdminSerializer(admin).data
+        except Exception as e:
+            # If serializer fails, return basic admin data
+            admin_data = {
+                'id': admin.id,
+                'email': user.email,
+                'screen_name': admin.profile.screen_name if hasattr(admin.profile, 'screen_name') else '',
+                'is_admin': admin.is_admin,
+            }
+        
+        return Response({
+            'message': 'Login successful',
+            'admin': admin_data,
+            'tokens': {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+        }, status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email'},
+                    'isAdmin': {'type': 'boolean', 'default': True}
+                },
+                'required': ['email'],
+                'example': {
+                    'email': 'contributor@example.com',
+                    'isAdmin': True
+                }
+            }
+        },
+        responses={201: AdminSerializer}
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='promote')
+    def promote_contributor(self, request):
+        """
+        Promote an existing contributor to admin.
+        Fetches contributor by email and creates admin record.
+        """
+        email = request.data.get('email', '').lower()
+        is_admin = request.data.get('isAdmin', True)
+        
+        if not email:
+            return Response(
+                {'error': 'Email is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find user by email (check both email and username fields)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Try username field if email field doesn't work
+            try:
+                user = User.objects.get(username=email)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'User with this email not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Check if user has a profile
+        try:
+            profile = Profile.objects.get(user=user)
+        except Profile.DoesNotExist:
+            return Response(
+                {'error': 'User profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if already an admin
+        if Admin.objects.filter(profile=profile).exists():
+            return Response(
+                {'error': 'User is already an admin'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create admin record
+        admin = Admin.objects.create(
+            profile=profile,
+            is_admin=is_admin
+        )
+        
+        return Response({
+            'message': 'Contributor promoted to admin successfully',
+            'admin': AdminSerializer(admin).data
+        }, status=status.HTTP_201_CREATED)
+
 

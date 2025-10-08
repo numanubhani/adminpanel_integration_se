@@ -157,5 +157,15 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
-# CORS (allow local frontend)
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS Configuration - Allow React Frontend
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",      # React default port
+    "http://localhost:5173",      # Vite default port
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+# For development, you can also allow all origins (comment above and uncomment below)
+# CORS_ALLOW_ALL_ORIGINS = True

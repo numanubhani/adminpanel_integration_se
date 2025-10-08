@@ -51,4 +51,15 @@ class BodyPartImageAdmin(admin.ModelAdmin):
     image_tag.allow_tags = True
     image_tag.short_description = "Preview"
 
-	
+
+@admin.register(Admin)
+class AdminAdmin(admin.ModelAdmin):
+    list_display = ("id", "get_email", "is_admin", "created_at", "updated_at")
+    list_filter = ("is_admin", "created_at")
+    search_fields = ("profile__user__email", "profile__user__username")
+    readonly_fields = ("created_at", "updated_at")
+    
+    def get_email(self, obj):
+        return obj.profile.user.email
+    get_email.short_description = "Email"
+    get_email.admin_order_field = "profile__user__email"
