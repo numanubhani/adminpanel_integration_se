@@ -460,6 +460,105 @@ class IsAdminOrReadOnly(permissions.BasePermission):
             return False
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def contributor_metrics(request):
+    """
+    Get contributor statistics and metrics.
+    Returns counts based on various attributes.
+    """
+    try:
+        # Get all contributors
+        contributors = Profile.objects.filter(role='contributor')
+        
+        # Calculate metrics
+        total_contributors = contributors.count()
+        
+        # Female metrics
+        female_contributors = contributors.filter(gender='Female')
+        total_females = female_contributors.count()
+        female_22_25 = female_contributors.filter(age__gte=22, age__lte=25).count()
+        light_skin_females = female_contributors.filter(skin_tone__icontains='Light').count()
+        blonde_females = female_contributors.filter(hair_color__icontains='Blonde').count()
+        petite_females = female_contributors.filter(body_type='Petite').count()
+        
+        # General metrics
+        c_cup_contributors = contributors.filter(bust_size='C').count()
+        tall_slender = contributors.filter(body_type='Tall & Slender').count()
+        
+        # Additional metrics by gender
+        male_contributors = contributors.filter(gender='Male').count()
+        other_contributors = contributors.filter(gender='Other').count()
+        
+        return Response({
+            'total_contributors': total_contributors,
+            'total_females': total_females,
+            'female_22_25': female_22_25,
+            'light_skin_females': light_skin_females,
+            'blonde_females': blonde_females,
+            'petite_females': petite_females,
+            'c_cup_contributors': c_cup_contributors,
+            'tall_slender': tall_slender,
+            'male_contributors': male_contributors,
+            'other_contributors': other_contributors,
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def contributors_list(request):
+    """
+    Get all contributors with their complete profile data.
+    Returns list of contributors for leaderboard and analytics.
+    """
+    try:
+        # Get all contributors
+        contributors = Profile.objects.filter(role='contributor').select_related('user')
+        
+        # Transform to frontend format
+        contributors_data = []
+        for profile in contributors:
+            contributor_dict = {
+                'id': profile.id,
+                'name': profile.screen_name or profile.user.email,
+                'email': profile.user.email,
+                'gender': profile.gender or 'Unknown',
+                'age': profile.age,
+                'skinTone': profile.skin_tone or '',
+                'hairColor': profile.hair_color or '',
+                'bodyType': profile.body_type or profile.female_body_type or '',
+                'shoeSize': profile.shoe_size or '',
+                'height': profile.height or '',
+                'weight': profile.weight or '',
+                'cupSize': profile.bust_size or '',
+                'penisLength': profile.penis_length or '',
+                'bio': profile.bio or '',
+                'created_at': profile.user.date_joined.isoformat() if profile.user.date_joined else None,
+                # Placeholder for contest/earnings data - would come from contest participation
+                'earnings': 0,
+                'contestsWon': 0,
+                'engagement': 0,
+            }
+            contributors_data.append(contributor_dict)
+        
+        return Response({
+            'count': len(contributors_data),
+            'contributors': contributors_data
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 class ContestViewSet(viewsets.ModelViewSet):
     """
     Contest ViewSet for full CRUD operations.

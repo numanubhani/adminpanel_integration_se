@@ -4,6 +4,7 @@ import { BsChevronDown } from "react-icons/bs";
 import Select from "react-select";
 import { FilterIcon } from "./CustomSVG";
 import { useNavigate } from "react-router-dom";
+import BASE_URL from "../utils/instance";
 import Image1 from "../assets/contest images/image1.jpg";
 import Image2 from "../assets/contest images/image2.jpg";
 import Image3 from "../assets/contest images/image3.jpg";
@@ -64,163 +65,57 @@ export default function ModelingContestsUI({ role }) {
     setUserRole(storedRole || "");
   }, []);
 
- const allContests = [
-  {
-    id: 1,
-    title: "Beach Body",
-    description: "Show off your elegant feet.",
-    category: "Hand",
-    user_joined: "75/500",
-    image: Image6,
-    attributes: {
-      gender: "Male",
-      age: "18-25",
-      PenisSize: "5'",
-      bodyType: "Slim",
-      skinTone: "Fair",
-      HairColor: "Blonde"
-    },
-    estimatedPrice: "$2200",
-    startTime: "2025-06-01T08:00:00Z",
-    endTime: "2025-06-03T08:00:00Z"
-  },
-  {
-    id: 2,
-    title: "Perfect Pose",
-    description: "Submit your best legs!",
-    category: "Face",
-    user_joined: "100/500",
-    image: Image1,
-    attributes: {
-      gender: "Female",
-      age: "25-35",
-      bustSize: "36D",
-      bodyType: "Athletic",
-      skinTone: "Medium",
-      HairColor: "Brown"
-    },
-    estimatedPrice: "$1200",
-    startTime: "2025-06-04T08:00:00Z",
-    endTime: "2025-06-06T08:00:00Z"
-  },
-  {
-    id: 3,
-    title: "Best Chest",
-    description: "Style your feet with trendy shoes.",
-    category: "Foot",
-    user_joined: "60/500",
-    image: Image8,
-    attributes: {
-      gender: "Female",
-      age: "20-30",
-      bustSize: "36B",
-      bodyType: "Petite",
-      skinTone: "Tan",
-      HairColor: "Black"
-    },
-    estimatedPrice: "$1200",
-    startTime: "2025-06-07T08:00:00Z",
-    endTime: "2025-06-09T08:00:00Z"
-  },
-  {
-    id: 4,
-    title: "Nicest legs",
-    description: "Show off your toned body ready for the beach.",
-    category: "Body",
-    user_joined: "120/500",
-    image: Image3,
-    attributes: {
-      gender: "Female",
-      age: "22-28",
-      PenisSize: "6.5'",
-      bodyType: "Muscular",
-      skinTone: "Olive",
-      HairColor: "Olive"
-    },
-    estimatedPrice: "$2200",
-    startTime: "2025-06-10T08:00:00Z",
-    endTime: "2025-06-13T08:00:00Z"
-  },
-  {
-    id: 5,
-    title: "Cutest Feets",
-    description: "Strike your best formal evening look.",
-    category: "Pose",
-    user_joined: "90/500",
-    image: Image5,
-    attributes: {
-      gender: "Female",
-      age: "30-40",
-      bustSize: "36C",
-      bodyType: "Curvy",
-      skinTone: "Light",
-      HairColor: "Blonde"
-    },
-    estimatedPrice: "$1200",
-    startTime: "2025-06-15T08:00:00Z",
-    endTime: "2025-06-18T08:00:00Z"
-  },
-  {
-    id: 6,
-    title: "Runway Ready",
-    description: "Walk your best walk and pose like a model.",
-    category: "Fashion",
-    user_joined: "110/500",
-    image: Image4,
-    attributes: {
-      gender: "Other",
-      age: "20-35",
-      bustSize: "36B",
-      bodyType: "Tall",
-      skinTone: "Brown",
-      HairColor: "Blonde"
-    },
-    estimatedPrice: "$1200",
-    startTime: "2025-06-20T08:00:00Z",
-    endTime: "2025-06-23T08:00:00Z"
-  },
-  {
-    id: 6,
-    title: "Prettiest V",
-    description: "Walk your best walk and pose like a model.",
-    category: "Fashion",
-    user_joined: "120/500",
-    image: Image7,
-    attributes: {
-      gender: "Female",
-      age: "20-35",
-      bustSize: "36B",
-      bodyType: "Tall",
-      skinTone: "Brown",
-      HairColor: "Blonde"
-    },
-    estimatedPrice: "$1000",
-    startTime: "2025-06-20T08:00:00Z",
-    endTime: "2025-06-23T08:00:00Z"
-  },
-  {
-    id: 7,
-    title: "Best Figure",
-    description: "Walk your best walk and pose like a model.",
-    category: "Fashion",
-    user_joined: "110/500",
-    image: Image6,
-    attributes: {
-      gender: "Male",
-      age: "20-35",
-      PenisSize: "5.5'",
-      bodyType: "Tall",
-      skinTone: "Brown",
-      HairColor: "Blonde"
-    },
-    estimatedPrice: "$2500",
-    startTime: "2025-06-20T08:00:00Z",
-    endTime: "2025-06-23T08:00:00Z"
-  }
+  const [allContests, setAllContests] = useState([]);
+  const [contests, setContests] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-];
+  // Fetch contests from backend
+  useEffect(() => {
+    const fetchContests = async () => {
+      try {
+        setLoading(true);
+        const token = localStorage.getItem("access_token");
+        
+        const response = await fetch(`${BASE_URL}accounts/contests/`, {
+          headers: {
+            "Authorization": token ? `Bearer ${token}` : "",
+            "Content-Type": "application/json",
+          }
+        });
 
-  const [contests, setContests] = useState(allContests);
+        if (!response.ok) {
+          throw new Error("Failed to fetch contests");
+        }
+
+        const data = await response.json();
+        console.log("Fetched contests for filter:", data);
+        
+        // Transform backend data to match expected format
+        const transformedData = data.map(contest => ({
+          id: contest.id,
+          title: contest.title,
+          description: contest.description || "No description available",
+          category: contest.category,
+          user_joined: `${contest.joined || 0}/${contest.max_participants || 500}`,
+          image: contest.image || Image1, // Use contest image or fallback
+          attributes: contest.attributes || {},
+          estimatedPrice: contest.cost > 0 ? `$${contest.cost}` : "Free",
+          startTime: contest.start_time,
+          endTime: contest.end_time,
+          cost: contest.cost || 0,
+        }));
+        
+        setAllContests(transformedData);
+        setContests(transformedData);
+      } catch (err) {
+        console.error("Error fetching contests:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchContests();
+  }, []);
 
   const bodyPartOptions = [
     { value: "Teaser", label: "Teaser" },
@@ -285,6 +180,11 @@ export default function ModelingContestsUI({ role }) {
   </div>
 )}
 
+        {loading ? (
+          <div className="flex justify-center items-center py-10">
+            <div className="text-[#ceb46a] text-lg">Loading contests...</div>
+          </div>
+        ) : (
         <div className={`grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 ${showFilters ? "xl:grid-cols-3" : "xl:grid-cols-4"}`}>
           {contests.map((contest) => (
             <div key={contest.id} className="bg-black rounded-lg overflow-hidden">
@@ -301,12 +201,27 @@ export default function ModelingContestsUI({ role }) {
               </div>
               <div className="p-4">
                 <div className="text-white text-sm mb-2 space-y-1">
-                  <p><span className="font-bold text-white">Gender:</span> {contest.attributes.gender}</p>
-                  <p><span className="font-bold text-white">Age:</span> {contest.attributes.age}</p>
-                  <p><span className="font-bold text-white">Bust Size:</span> {contest.attributes.bustSize}</p>
-                  <p><span className="font-bold text-white">Body Type:</span> {contest.attributes.bodyType}</p>
-                  <p><span className="font-bold text-white">Skin Tone:</span> {contest.attributes.skinTone}</p>
-                  <p><span className="font-bold text-white">Hair Color:</span> {contest.attributes.HairColor}</p>
+                  {contest.attributes?.Gender && contest.attributes.Gender.length > 0 && (
+                    <p><span className="font-bold text-white">Gender:</span> {contest.attributes.Gender.join(", ")}</p>
+                  )}
+                  {contest.attributes?.Age && contest.attributes.Age.length > 0 && (
+                    <p><span className="font-bold text-white">Age:</span> {contest.attributes.Age.join(", ")}</p>
+                  )}
+                  {contest.attributes?.["Bust Size"] && contest.attributes["Bust Size"].length > 0 && (
+                    <p><span className="font-bold text-white">Bust Size:</span> {contest.attributes["Bust Size"].join(", ")}</p>
+                  )}
+                  {contest.attributes?.["Penis Size"] && contest.attributes["Penis Size"].length > 0 && (
+                    <p><span className="font-bold text-white">Penis Size:</span> {contest.attributes["Penis Size"].join(", ")}</p>
+                  )}
+                  {contest.attributes?.["Body Type"] && contest.attributes["Body Type"].length > 0 && (
+                    <p><span className="font-bold text-white">Body Type:</span> {contest.attributes["Body Type"].join(", ")}</p>
+                  )}
+                  {contest.attributes?.["Skin Tone"] && contest.attributes["Skin Tone"].length > 0 && (
+                    <p><span className="font-bold text-white">Skin Tone:</span> {contest.attributes["Skin Tone"].join(", ")}</p>
+                  )}
+                  {contest.attributes?.["Hair Color"] && contest.attributes["Hair Color"].length > 0 && (
+                    <p><span className="font-bold text-white">Hair Color:</span> {contest.attributes["Hair Color"].join(", ")}</p>
+                  )}
                   <p><span className="font-bold text-white">Contributors Joined:</span> {contest.user_joined}</p>
                   {role !== "Judge" && (
             <div className="flex justify-between">
@@ -337,6 +252,7 @@ export default function ModelingContestsUI({ role }) {
             </p>
           )}
         </div>
+        )}
       </div>
 
       {showConfirm && (

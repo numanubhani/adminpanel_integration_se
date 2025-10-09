@@ -11,6 +11,8 @@ from .views import (
     add_funds,
     AdminViewSet,
     ContestViewSet,
+    contributor_metrics,
+    contributors_list,
 )
 
 router = DefaultRouter()
@@ -27,6 +29,10 @@ urlpatterns = [
     path("me/", me),
     path("add-funds/", add_funds),
     path("profile/me/", MyProfileView.as_view(), name="my-profile"),
+    
+    # Contributor metrics and data
+    path("contributor-metrics/", contributor_metrics, name="contributor-metrics"),
+    path("contributors/", contributors_list, name="contributors-list"),
     
     # Router endpoints (includes body-part-images and admin)
     path("", include(router.urls)),
