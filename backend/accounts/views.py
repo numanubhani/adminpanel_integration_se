@@ -6,7 +6,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
-from .models import BodyPartImage
+from .models import BodyPartImage, Contest, ContestParticipant, Admin
 from .serializers import BodyPartImageSerializer
 
 
@@ -17,6 +17,9 @@ from .serializers import (
     ContributorRegisterSerializer,
     AddFundsSerializer,
     AdminSerializer,
+    ContestSerializer,
+    ContestDetailSerializer,
+    ContestParticipantSerializer,
 )
 from .models import Profile, Payment, Admin
 
@@ -428,5 +431,225 @@ class AdminViewSet(viewsets.ModelViewSet):
             'message': 'Contributor promoted to admin successfully',
             'admin': AdminSerializer(admin).data
         }, status=status.HTTP_201_CREATED)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CONTEST MANAGEMENT
+# ══════════════════════════════════════════════════════════════════════
+
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """
+    Custom permission:
+    - Only users with Admin profile can create, update, delete contests
+    - All authenticated users can view contests
+    """
+    def has_permission(self, request, view):
+        # Allow read-only access for all authenticated users
+        if request.method in permissions.SAFE_METHODS:
+            return request.user and request.user.is_authenticated
+        
+        # Write permissions only for admins
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Check if user has admin profile
+        try:
+            admin = Admin.objects.get(profile__user=request.user)
+            return admin.is_admin
+        except Admin.DoesNotExist:
+            return False
+
+
+class ContestViewSet(viewsets.ModelViewSet):
+    """
+    Contest ViewSet for full CRUD operations.
+    
+    Permissions:
+    - CREATE/UPDATE/DELETE: Only users with Admin role
+    - LIST/RETRIEVE: All authenticated users (users and contributors)
+    
+    Endpoints:
+    - GET /api/accounts/contests/ - List all active contests
+    - GET /api/accounts/contests/{id}/ - Get contest details
+    - POST /api/accounts/contests/ - Create contest (admin only)
+    - PUT/PATCH /api/accounts/contests/{id}/ - Update contest (admin only)
+    - DELETE /api/accounts/contests/{id}/ - Delete contest (admin only)
+    - POST /api/accounts/contests/{id}/join/ - Join contest (contributors only)
+    """
+    queryset = Contest.objects.all()
+    permission_classes = [IsAdminOrReadOnly]
+    
+    def get_serializer_class(self):
+        """Use detailed serializer for single contest view"""
+        if self.action == 'retrieve':
+            return ContestDetailSerializer
+        return ContestSerializer
+    
+    def get_queryset(self):
+        """
+        Optionally filter contests by category, active status, etc.
+        """
+        queryset = Contest.objects.all()
+        
+        # Filter by active status
+        is_active = self.request.query_params.get('is_active', None)
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+        
+        # Filter by category
+        category = self.request.query_params.get('category', None)
+        if category:
+            queryset = queryset.filter(category=category)
+        
+        return queryset.order_by('-created_at')
+    
+    def perform_create(self, serializer):
+        """Automatically set created_by to current admin"""
+        try:
+            admin = Admin.objects.get(profile__user=self.request.user)
+            serializer.save(created_by=admin)
+        except Admin.DoesNotExist:
+            # This shouldn't happen due to permission check, but just in case
+            raise permissions.PermissionDenied("Only admins can create contests")
+    
+    @extend_schema(
+        request=None,
+        responses={200: ContestParticipantSerializer},
+        description="Join a contest as a contributor"
+    )
+    @decorators.action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def join(self, request, pk=None):
+        """
+        Allow contributors to join a contest.
+        Contributors are automatically checked for eligibility based on their profile attributes.
+        """
+        contest = self.get_object()
+        
+        # Check if user has a profile
+        try:
+            profile = request.user.profile
+        except Profile.DoesNotExist:
+            return Response(
+                {'error': 'Profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if profile is a contributor
+        if profile.role != 'contributor':
+            return Response(
+                {'error': 'Only contributors can join contests'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if contest is full
+        if contest.joined >= contest.max_participants:
+            return Response(
+                {'error': 'Contest is full'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if already joined
+        if ContestParticipant.objects.filter(contest=contest, contributor=profile).exists():
+            return Response(
+                {'error': 'Already joined this contest'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check eligibility based on attributes
+        is_eligible = self._check_eligibility(profile, contest)
+        if not is_eligible:
+            return Response(
+                {'error': 'You do not meet the contest requirements'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create participant entry
+        participant = ContestParticipant.objects.create(
+            contest=contest,
+            contributor=profile,
+            auto_entry=False
+        )
+        
+        # Increment joined count
+        contest.joined += 1
+        contest.save()
+        
+        return Response({
+            'message': 'Successfully joined the contest',
+            'participant': ContestParticipantSerializer(participant).data
+        }, status=status.HTTP_201_CREATED)
+    
+    def _check_eligibility(self, profile, contest):
+        """
+        Check if a contributor is eligible for a contest based on attributes.
+        Returns True if all contest attribute requirements are met.
+        """
+        contest_attrs = contest.attributes or {}
+        
+        for category, required_values in contest_attrs.items():
+            if not required_values:  # Skip if no values specified
+                continue
+            
+            # Skip "All" values
+            if "All" in required_values:
+                continue
+            
+            # Get contributor's value for this attribute
+            contributor_value = None
+            
+            # Map contest attribute names to profile fields
+            attr_mapping = {
+                "Gender": "gender",
+                "Age": "age",  # This needs special handling
+                "Skin Tone": "skin_tone",
+                "Body Type": "body_type",
+                "Hair Color": "hair_color",
+                "Shoe Size": "shoe_size",
+                "Bust Size": "bust_size",
+                "Penis Size": "penis_length",
+            }
+            
+            profile_field = attr_mapping.get(category)
+            if profile_field:
+                contributor_value = getattr(profile, profile_field, None)
+            
+            # Check if contributor's value matches any of the required values
+            if contributor_value and contributor_value not in required_values:
+                return False
+        
+        return True
+    
+    @extend_schema(
+        responses={200: ContestParticipantSerializer(many=True)},
+        description="Get all participants of a contest"
+    )
+    @decorators.action(detail=True, methods=['get'])
+    def participants(self, request, pk=None):
+        """Get all participants of a specific contest"""
+        contest = self.get_object()
+        participants = contest.participants.all()
+        serializer = ContestParticipantSerializer(participants, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        responses={200: ProfileSerializer(many=True)},
+        description="Get all eligible contributors for a contest based on attributes"
+    )
+    @decorators.action(detail=True, methods=['get'], permission_classes=[IsAdminOrReadOnly])
+    def eligible_contributors(self, request, pk=None):
+        """
+        Get all contributors who are eligible for this contest based on attributes.
+        Admin only endpoint.
+        """
+        contest = self.get_object()
+        
+        # Get all contributors
+        contributors = Profile.objects.filter(role='contributor')
+        
+        # Filter by eligibility
+        eligible = [c for c in contributors if self._check_eligibility(c, contest)]
+        
+        serializer = ProfileSerializer(eligible, many=True)
+        return Response(serializer.data)
 
 

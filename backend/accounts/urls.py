@@ -10,11 +10,13 @@ from .views import (
     me, 
     add_funds,
     AdminViewSet,
+    ContestViewSet,
 )
 
 router = DefaultRouter()
 router.register("body-part-images", BodyPartImageViewSet, basename="body-part-images")
 router.register("admin", AdminViewSet, basename="admin")
+router.register("contests", ContestViewSet, basename="contests")
 
 urlpatterns = [
     # User & Contributor endpoints

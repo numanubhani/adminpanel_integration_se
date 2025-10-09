@@ -63,3 +63,49 @@ class AdminAdmin(admin.ModelAdmin):
         return obj.profile.user.email
     get_email.short_description = "Email"
     get_email.admin_order_field = "profile__user__email"
+
+
+@admin.register(Contest)
+class ContestAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "category", "joined", "max_participants", "start_time", "end_time", "is_active", "created_by")
+    list_filter = ("category", "is_active", "recurring", "created_at")
+    search_fields = ("title", "category")
+    readonly_fields = ("created_at", "updated_at", "joined")
+    fieldsets = (
+        ("Basic Info", {
+            "fields": ("title", "category", "image", "is_active")
+        }),
+        ("Attributes", {
+            "fields": ("attributes",)
+        }),
+        ("Participants", {
+            "fields": ("joined", "max_participants")
+        }),
+        ("Schedule", {
+            "fields": ("start_time", "end_time", "recurring")
+        }),
+        ("Payment", {
+            "fields": ("cost",)
+        }),
+        ("Meta", {
+            "fields": ("created_by", "created_at", "updated_at")
+        }),
+    )
+
+
+@admin.register(ContestParticipant)
+class ContestParticipantAdmin(admin.ModelAdmin):
+    list_display = ("id", "get_contest_title", "get_contributor_name", "joined_at", "auto_entry")
+    list_filter = ("auto_entry", "joined_at")
+    search_fields = ("contest__title", "contributor__screen_name", "contributor__user__email")
+    readonly_fields = ("joined_at",)
+    
+    def get_contest_title(self, obj):
+        return obj.contest.title
+    get_contest_title.short_description = "Contest"
+    get_contest_title.admin_order_field = "contest__title"
+    
+    def get_contributor_name(self, obj):
+        return obj.contributor.screen_name or obj.contributor.user.email
+    get_contributor_name.short_description = "Contributor"
+    get_contributor_name.admin_order_field = "contributor__screen_name"

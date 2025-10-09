@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage, Admin
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant
 
 
 # ── Register (role-aware)
@@ -291,3 +291,78 @@ class AdminSerializer(serializers.ModelSerializer):
         model = Admin
         fields = ['id', 'email', 'screen_name', 'is_admin', 'created_at', 'updated_at']
         read_only_fields = ['id', 'email', 'screen_name', 'is_admin', 'created_at', 'updated_at']
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CONTEST SERIALIZERS
+# ══════════════════════════════════════════════════════════════════════
+
+class ContestSerializer(serializers.ModelSerializer):
+    """
+    Contest serializer for full CRUD operations.
+    Used by admin to create/edit contests and by users/contributors to view contests.
+    """
+    created_by_name = serializers.CharField(source='created_by.profile.screen_name', read_only=True)
+    
+    class Meta:
+        model = Contest
+        fields = [
+            'id', 'title', 'category', 'image', 'attributes', 
+            'joined', 'max_participants', 'start_time', 'end_time', 
+            'recurring', 'cost', 'is_active', 
+            'created_by', 'created_by_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
+    
+    def validate(self, data):
+        """Validate that end_time is after start_time"""
+        start_time = data.get('start_time')
+        end_time = data.get('end_time')
+        
+        if start_time and end_time and end_time <= start_time:
+            raise serializers.ValidationError("End time must be after start time")
+        
+        return data
+
+
+class ContestParticipantSerializer(serializers.ModelSerializer):
+    """
+    Serializer for contest participants.
+    Shows which contributors have joined which contests.
+    """
+    contributor_name = serializers.CharField(source='contributor.screen_name', read_only=True)
+    contributor_email = serializers.EmailField(source='contributor.user.email', read_only=True)
+    contest_title = serializers.CharField(source='contest.title', read_only=True)
+    
+    class Meta:
+        model = ContestParticipant
+        fields = [
+            'id', 'contest', 'contest_title', 'contributor', 
+            'contributor_name', 'contributor_email', 
+            'joined_at', 'auto_entry'
+        ]
+        read_only_fields = ['id', 'joined_at']
+
+
+class ContestDetailSerializer(serializers.ModelSerializer):
+    """
+    Detailed contest serializer that includes participants list.
+    Used for single contest view with all details.
+    """
+    created_by_name = serializers.CharField(source='created_by.profile.screen_name', read_only=True)
+    participants_list = ContestParticipantSerializer(source='participants', many=True, read_only=True)
+    participants_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Contest
+        fields = [
+            'id', 'title', 'category', 'image', 'attributes', 
+            'joined', 'max_participants', 'start_time', 'end_time', 
+            'recurring', 'cost', 'is_active', 
+            'created_by', 'created_by_name', 'created_at', 'updated_at',
+            'participants_list', 'participants_count'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at', 'participants_list', 'participants_count']
+    
+    def get_participants_count(self, obj):
+        return obj.participants.count()

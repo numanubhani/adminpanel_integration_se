@@ -108,3 +108,71 @@ class Admin(models.Model):
     class Meta:
         verbose_name = "Admin"
         verbose_name_plural = "Admins"
+
+
+class Contest(models.Model):
+    """
+    Contest model for managing contests.
+    Admins can create, edit, delete contests.
+    Users and contributors can view and join contests.
+    """
+    RECURRING_CHOICES = (
+        ("none", "One-time"),
+        ("daily", "Daily"),
+        ("weekly", "Weekly"),
+        ("monthly", "Monthly"),
+    )
+    
+    # Basic info
+    title = models.CharField(max_length=255)
+    category = models.CharField(max_length=100)  # Full Body, Chest & Stomach, etc.
+    image = models.TextField(blank=True)  # Contest image URL or data URL
+    
+    # Attributes (stored as JSON)
+    attributes = models.JSONField(default=dict, blank=True)
+    # Example: {"Gender": ["Male"], "Age": ["18-25"], ...}
+    
+    # Participant limits
+    joined = models.IntegerField(default=0)
+    max_participants = models.IntegerField(default=500)
+    
+    # Timing
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+    recurring = models.CharField(max_length=20, choices=RECURRING_CHOICES, default="none")
+    
+    # Cost
+    cost = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    
+    # Meta
+    created_by = models.ForeignKey(Admin, on_delete=models.SET_NULL, null=True, related_name="created_contests")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+    
+    def __str__(self):
+        return f"{self.title} - {self.category}"
+    
+    class Meta:
+        verbose_name = "Contest"
+        verbose_name_plural = "Contests"
+        ordering = ['-created_at']
+
+
+class ContestParticipant(models.Model):
+    """
+    Tracks which contributors have joined which contests.
+    """
+    contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name="participants")
+    contributor = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="contest_entries")
+    joined_at = models.DateTimeField(auto_now_add=True)
+    auto_entry = models.BooleanField(default=False)  # Whether they were auto-entered
+    
+    class Meta:
+        unique_together = ('contest', 'contributor')
+        verbose_name = "Contest Participant"
+        verbose_name_plural = "Contest Participants"
+        ordering = ['-joined_at']
+    
+    def __str__(self):
+        return f"{self.contributor.screen_name} in {self.contest.title}"
