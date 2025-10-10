@@ -182,3 +182,36 @@ class ContestParticipant(models.Model):
     
     def __str__(self):
         return f"{self.contributor.screen_name} in {self.contest.title}"
+
+
+class SmokeSignal(models.Model):
+    """
+    Smoke Signal model for tracking notifications sent via Email or SMS.
+    Used for monitoring and analytics of system communications.
+    """
+    CHANNEL_EMAIL = 'Email'
+    CHANNEL_SMS = 'SMS'
+    CHANNEL_CHOICES = [(CHANNEL_EMAIL, 'Email'), (CHANNEL_SMS, 'SMS')]
+
+    STATUS_DELIVERED = 'Delivered'
+    STATUS_FAILED = 'Failed'
+    STATUS_PENDING = 'Pending'
+    STATUS_CHOICES = [
+        (STATUS_DELIVERED, 'Delivered'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_PENDING, 'Pending'),
+    ]
+
+    sender = models.CharField(max_length=200)
+    channel = models.CharField(max_length=10, choices=CHANNEL_CHOICES)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    message = models.CharField(max_length=255)
+
+    class Meta:
+        ordering = ['-timestamp']
+        verbose_name = "Smoke Signal"
+        verbose_name_plural = "Smoke Signals"
+
+    def __str__(self):
+        return f'{self.channel} | {self.status} | {self.sender} | {self.message}'

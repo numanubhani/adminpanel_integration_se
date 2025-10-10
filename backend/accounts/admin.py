@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import *
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal
 
 
 @admin.register(Profile)
@@ -111,6 +111,10 @@ class ContestParticipantAdmin(admin.ModelAdmin):
     get_contributor_name.admin_order_field = "contributor__screen_name"
 
 
-admin.site.register(ContestParticipant)
-admin.site.register(Contest)
-admin.site.register(Admin)
+@admin.register(SmokeSignal)
+class SmokeSignalAdmin(admin.ModelAdmin):
+    list_display = ('id', 'sender', 'channel', 'status', 'timestamp', 'message')
+    list_filter = ('channel', 'status', 'timestamp')
+    search_fields = ('sender', 'message')
+    readonly_fields = ('timestamp',)
+    ordering = ('-timestamp',)

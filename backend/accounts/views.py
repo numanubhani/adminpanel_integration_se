@@ -1,0 +1,1169 @@
+from django.contrib.auth.models import User
+from django.contrib.auth.hashers import check_password
+from rest_framework import status, permissions, viewsets, decorators
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse, OpenApiParameter
+from datetime import timedelta
+from django.utils import timezone
+from django.db.models import Sum, Count
+import os
+
+from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal
+from .serializers import (
+    RegisterSerializer,
+    ProfileSerializer,
+    UserRegisterSerializer,
+    ContributorRegisterSerializer,
+    AddFundsSerializer,
+    AdminSerializer,
+    ContestSerializer,
+    ContestDetailSerializer,
+    ContestParticipantSerializer,
+    SmokeSignalSerializer,
+    DashboardStatsSerializer,
+    BodyPartImageSerializer,
+)
+
+# Optional: Twilio for SMS sending
+try:
+    from twilio.rest import Client
+    TWILIO_AVAILABLE = True
+except Exception:
+    TWILIO_AVAILABLE = False
+
+
+# ══════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════
+
+def parse_height_to_inches(height_str):
+    """Convert height string like '5\\'10\"' or '5 feet 10 inches' to numeric inches"""
+    if not height_str:
+        return None
+    try:
+        # Handle formats like 5'10" or 5'10
+        if "'" in height_str:
+            parts = height_str.replace('"', '').replace("'", ' ').split()
+            feet = int(parts[0]) if parts else 0
+            inches = int(parts[1]) if len(parts) > 1 else 0
+            return feet * 12 + inches
+        # Handle plain numbers (assume already in inches)
+        return float(height_str)
+    except (ValueError, IndexError):
+        return None
+
+
+def parse_numeric_value(value_str):
+    """Parse numeric value from string, handling ranges like '6-7.5'"""
+    if not value_str:
+        return None
+    try:
+        # If it's a range, take the midpoint
+        if '-' in str(value_str):
+            parts = value_str.split('-')
+            return (float(parts[0]) + float(parts[1])) / 2
+        return float(value_str)
+    except (ValueError, IndexError):
+        return None
+
+
+def _filter_by_range(qs, range_param: str):
+    """Helper function to filter queryset by time range"""
+    now = timezone.now()
+    if range_param == '7d':
+        since = now - timedelta(days=7)
+    else:
+        since = now - timedelta(hours=24)
+    return qs.filter(timestamp__gte=since)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# AUTHENTICATION VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class AuthViewSet(viewsets.GenericViewSet):
+    """
+    Authentication ViewSet for login, registration, and user management.
+    All authentication-related endpoints in one place.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = ProfileSerializer
+    
+    @extend_schema(
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "format": "email"},
+                    "password": {"type": "string"},
+                },
+                "required": ["email", "password"],
+                "example": {"email": "john@example.com", "password": "secret123"},
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                description="Login success",
+                response=dict,
+                examples=[
+                    OpenApiExample(
+                        "Login Success",
+                        value={
+                            "access": "<jwt>",
+                            "refresh": "<jwt>",
+                            "profile": {
+                                "email": "john@example.com",
+                                "username": "john@example.com",
+                                "role": "user",
+                                "screen_name": "",
+                            },
+                        },
+                    )
+                ],
+            ),
+            401: OpenApiResponse(description="Invalid credentials"),
+        },
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='login')
+    def login(self, request):
+        """User/Contributor login with email and password"""
+        email = request.data.get("email", "").lower()
+        password = request.data.get("password", "")
+
+        # Try to find user by email or username
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            try:
+                user = User.objects.get(username=email)
+            except User.DoesNotExist:
+                return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # Simple password check
+        if not check_password(password, user.password):
+            return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "profile": ProfileSerializer(user.profile, context={'request': request}).data,
+            }
+        )
+    
+    @extend_schema(
+        request=UserRegisterSerializer,
+        responses={201: ProfileSerializer},
+        examples=[
+            OpenApiExample(
+                "User Register Payload",
+                value={
+                    "email": "user@example.com",
+                    "password": "secret123",
+                    "screen_name": "user1",
+                },
+            )
+        ],
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='register/user')
+    def register_user(self, request):
+        """Register a new user account"""
+        serializer = UserRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "profile": ProfileSerializer(user.profile, context={'request': request}).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+    
+    @extend_schema(
+        request=ContributorRegisterSerializer,
+        responses={201: ProfileSerializer},
+        examples=[
+            OpenApiExample(
+                "Contributor Register Payload",
+                value={
+                    "email": "contrib@example.com",
+                    "password": "secret123",
+                    "screenName": "creator1",
+                    "creatorPathway": "photography",
+                    "firstName": "John",
+                    "lastName": "Doe",
+                    "phoneNumber": "+123456789",
+                    "address": "123 Main St",
+                    "city": "NYC",
+                    "state": "NY",
+                    "zipCode": "10001",
+                    "country": "US",
+                    "countryResidence": "US",
+                    "nationality": "American",
+                    "occupation": "Photographer",
+                    "nameVisibility": "public",
+                    "isOver18": True,
+                    "bio": "Sample bio",
+                    "dateOfBirth": "1990-01-01",
+                    "age": 35,
+                    "gender": "Male",
+                    "height": "5'10\"",
+                    "weight": "170",
+                    "shoeSize": "10.5",
+                    "skinTone": "Medium",
+                    "hairColor": "Brown",
+                    "bodyType": "Athletic/Average",
+                    "penisLength": "6-7.5",
+                },
+            )
+        ],
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='register/contributor')
+    def register_contributor(self, request):
+        """Register a new contributor account"""
+        serializer = ContributorRegisterSerializer(data=request.data)
+        if not serializer.is_valid():
+            print("Validation errors:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user = serializer.save()
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "profile": ProfileSerializer(user.profile, context={'request': request}).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+    
+    @decorators.action(detail=False, methods=['get'], permission_classes=[IsAuthenticated], url_path='me')
+    def me(self, request):
+        """Get current authenticated user profile"""
+        return Response(ProfileSerializer(request.user.profile, context={'request': request}).data)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PROFILE VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class ProfileViewSet(viewsets.ModelViewSet):
+    """
+    Profile ViewSet for managing user and contributor profiles.
+    Includes endpoints for profile CRUD, payment, metrics, and lists.
+    """
+    queryset = Profile.objects.all().select_related('user')
+    serializer_class = ProfileSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter profiles based on user permissions"""
+        user = self.request.user
+        # Regular users can only see their own profile
+        if not hasattr(user, 'profile'):
+            return Profile.objects.none()
+        
+        # Check if user is admin
+        try:
+            admin = Admin.objects.get(profile__user=user)
+            if admin.is_admin:
+                # Admins can see all profiles
+                return Profile.objects.all().select_related('user')
+        except Admin.DoesNotExist:
+            pass
+        
+        # Regular users see only their profile
+        return Profile.objects.filter(user=user)
+    
+    @decorators.action(detail=False, methods=['get'], url_path='my-profile')
+    def my_profile(self, request):
+        """Get current user's profile"""
+        return Response(ProfileSerializer(request.user.profile, context={'request': request}).data)
+    
+    @decorators.action(detail=False, methods=['put', 'patch'], url_path='update-profile')
+    def update_my_profile(self, request):
+        """Update current user's profile"""
+        profile = request.user.profile
+        serializer = ProfileSerializer(profile, data=request.data, partial=True, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+    
+    @extend_schema(
+        request=AddFundsSerializer,
+        responses={201: AddFundsSerializer},
+        examples=[
+            OpenApiExample(
+                "Add Funds Payload",
+                value={
+                    "cardNumber": "1234567890123456",
+                    "expiryDate": "12/2025",
+                    "securityCode": "123",
+                },
+            )
+        ],
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='add-funds')
+    def add_funds(self, request):
+        """Add funds to user account using payment information"""
+        print("Add funds request data:", request.data)
+        serializer = AddFundsSerializer(data=request.data)
+        if not serializer.is_valid():
+            print("Validation errors:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create payment record with default amount
+        payment = serializer.save(user=request.user, amount=0.00)
+
+        # Simulate success
+        payment.status = "completed"
+        payment.save()
+
+        return Response(
+            {
+                "message": "Funds added successfully",
+                "payment_id": payment.id,
+                "status": payment.status,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+    
+    @decorators.action(detail=False, methods=['get'], url_path='contributors/metrics')
+    def contributor_metrics(self, request):
+        """Get contributor statistics and metrics"""
+        try:
+            # Get all contributors
+            contributors = Profile.objects.filter(role='contributor')
+            
+            # Calculate metrics
+            total_contributors = contributors.count()
+            
+            # Female metrics
+            female_contributors = contributors.filter(gender='Female')
+            total_females = female_contributors.count()
+            female_22_25 = female_contributors.filter(age__gte=22, age__lte=25).count()
+            light_skin_females = female_contributors.filter(skin_tone__icontains='Light').count()
+            blonde_females = female_contributors.filter(hair_color__icontains='Blonde').count()
+            petite_females = female_contributors.filter(body_type='Petite').count()
+            
+            # General metrics
+            c_cup_contributors = contributors.filter(bust_size='C').count()
+            tall_slender = contributors.filter(body_type='Tall & Slender').count()
+            
+            # Additional metrics by gender
+            male_contributors = contributors.filter(gender='Male').count()
+            other_contributors = contributors.filter(gender='Other').count()
+            
+            return Response({
+                'total_contributors': total_contributors,
+                'total_females': total_females,
+                'female_22_25': female_22_25,
+                'light_skin_females': light_skin_females,
+                'blonde_females': blonde_females,
+                'petite_females': petite_females,
+                'c_cup_contributors': c_cup_contributors,
+                'tall_slender': tall_slender,
+                'male_contributors': male_contributors,
+                'other_contributors': other_contributors,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['get'], url_path='contributors/list')
+    def contributors_list(self, request):
+        """Get all contributors with their complete profile data"""
+        try:
+            # Get all contributors
+            contributors = Profile.objects.filter(role='contributor').select_related('user')
+            
+            # Transform to frontend format
+            contributors_data = []
+            for profile in contributors:
+                # Parse numeric values
+                height_inches = parse_height_to_inches(profile.height)
+                weight_lbs = parse_numeric_value(profile.weight)
+                shoe_size = parse_numeric_value(profile.shoe_size)
+                penis_inches = parse_numeric_value(profile.penis_length)
+                
+                contributor_dict = {
+                    'id': profile.id,
+                    'name': profile.screen_name or profile.user.email,
+                    'email': profile.user.email,
+                    'gender': profile.gender or 'Unknown',
+                    'age': profile.age,
+                    'skinTone': profile.skin_tone or '',
+                    'hairColor': profile.hair_color or '',
+                    'bodyType': profile.body_type or profile.female_body_type or '',
+                    # Numeric values for calculations (frontend expects these)
+                    'heightIn': height_inches,
+                    'weightLbs': weight_lbs,
+                    'shoeSize': shoe_size,
+                    'penisIn': penis_inches,
+                    # String values for display
+                    'height': profile.height or '',
+                    'weight': profile.weight or '',
+                    'cupSize': profile.bust_size or '',
+                    'penisLength': profile.penis_length or '',
+                    'bio': profile.bio or '',
+                    'photoGallery': [],  # Would come from BodyPartImage model
+                    'created_at': profile.user.date_joined.isoformat() if profile.user.date_joined else None,
+                    # Placeholder for contest/earnings data - would come from contest participation
+                    'earnings': 0,
+                    'contestsWon': 0,
+                    'engagement': 0,
+                }
+                contributors_data.append(contributor_dict)
+            
+            return Response({
+                'count': len(contributors_data),
+                'contributors': contributors_data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════
+# BODY PART IMAGE VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class BodyPartImageViewSet(viewsets.ModelViewSet):
+    """
+    Body Part Image ViewSet for managing contributor body part images.
+    """
+    serializer_class = BodyPartImageSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return BodyPartImage.objects.filter(user=self.request.user).order_by("-created_at")
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ADMIN VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class AdminViewSet(viewsets.ModelViewSet):
+    """
+    Admin ViewSet with register and login actions.
+    Simple admin management with email/password authentication.
+    """
+    queryset = Admin.objects.all().select_related('profile__user')
+    serializer_class = AdminSerializer
+    permission_classes = [AllowAny]  # We'll handle permissions per action
+    
+    @extend_schema(
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email'},
+                    'password': {'type': 'string'}
+                },
+                'required': ['email', 'password'],
+                'example': {
+                    'email': 'admin@example.com',
+                    'password': 'admin123456'
+                }
+            }
+        },
+        responses={200: AdminSerializer}
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='login')
+    def login(self, request):
+        """
+        Admin login with email and password.
+        Returns JWT tokens and admin details.
+        """
+        email = request.data.get('email', '').lower()
+        password = request.data.get('password', '')
+        
+        if not email or not password:
+            return Response(
+                {'error': 'Email and password are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find user (check both email and username fields)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Try username field if email field doesn't work
+            try:
+                user = User.objects.get(username=email)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Invalid credentials'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+        
+        # Check password
+        if not check_password(password, user.password):
+            return Response(
+                {'error': 'Invalid credentials'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Check if user has admin profile
+        try:
+            admin = Admin.objects.get(profile__user=user)
+            if not admin.is_admin:
+                return Response(
+                    {'error': 'Not an admin account'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except Admin.DoesNotExist:
+            return Response(
+                {'error': 'Not an admin account'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Generate JWT tokens
+        refresh = RefreshToken.for_user(user)
+        
+        try:
+            admin_data = AdminSerializer(admin).data
+        except Exception as e:
+            # If serializer fails, return basic admin data
+            admin_data = {
+                'id': admin.id,
+                'email': user.email,
+                'screen_name': admin.profile.screen_name if hasattr(admin.profile, 'screen_name') else '',
+                'is_admin': admin.is_admin,
+            }
+        
+        return Response({
+            'message': 'Login successful',
+            'admin': admin_data,
+            'tokens': {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+        }, status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email'},
+                    'isAdmin': {'type': 'boolean', 'default': True}
+                },
+                'required': ['email'],
+                'example': {
+                    'email': 'contributor@example.com',
+                    'isAdmin': True
+                }
+            }
+        },
+        responses={201: AdminSerializer}
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='promote')
+    def promote_contributor(self, request):
+        """
+        Promote an existing contributor to admin.
+        Fetches contributor by email and creates admin record.
+        """
+        email = request.data.get('email', '').lower()
+        is_admin = request.data.get('isAdmin', True)
+        
+        if not email:
+            return Response(
+                {'error': 'Email is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find user by email (check both email and username fields)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Try username field if email field doesn't work
+            try:
+                user = User.objects.get(username=email)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'User with this email not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Check if user has a profile
+        try:
+            profile = Profile.objects.get(user=user)
+        except Profile.DoesNotExist:
+            return Response(
+                {'error': 'User profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if already an admin
+        if Admin.objects.filter(profile=profile).exists():
+            return Response(
+                {'error': 'User is already an admin'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create admin record
+        admin = Admin.objects.create(
+            profile=profile,
+            is_admin=is_admin
+        )
+        
+        return Response({
+            'message': 'Contributor promoted to admin successfully',
+            'admin': AdminSerializer(admin).data
+        }, status=status.HTTP_201_CREATED)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CONTEST MANAGEMENT
+# ══════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════
+# DASHBOARD VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class DashboardViewSet(viewsets.GenericViewSet):
+    """
+    Dashboard ViewSet for admin statistics and metrics.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = DashboardStatsSerializer
+    
+    @decorators.action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        """Get admin dashboard statistics"""
+        try:
+            # Calculate date 30 days ago
+            thirty_days_ago = timezone.now() - timedelta(days=30)
+            
+            # Total contributors and users
+            total_contributors = Profile.objects.filter(role='contributor').count()
+            total_users = Profile.objects.filter(role='user').count()
+            
+            # Recent signups (last 30 days)
+            recent_contributors = Profile.objects.filter(
+                role='contributor', 
+                user__date_joined__gte=thirty_days_ago
+            ).count()
+            recent_users = Profile.objects.filter(
+                role='user', 
+                user__date_joined__gte=thirty_days_ago
+            ).count()
+            
+            # Wallet deposits (total amount from completed payments)
+            wallet_stats = Payment.objects.filter(
+                status='completed'
+            ).aggregate(
+                total=Sum('amount')
+            )
+            total_wallet_deposits = wallet_stats['total'] or 0
+            
+            # Total number of payments
+            total_payments = Payment.objects.filter(status='completed').count()
+            
+            # Active contests
+            active_contests = Contest.objects.filter(is_active=True).count()
+            
+            stats = {
+                'total_contributors': total_contributors,
+                'total_users': total_users,
+                'total_wallet_deposits': total_wallet_deposits,
+                'total_payments': total_payments,
+                'recent_contributors': recent_contributors,
+                'recent_users': recent_users,
+                'active_contests': active_contests,
+            }
+            
+            serializer = DashboardStatsSerializer(stats)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CUSTOM PERMISSIONS
+# ══════════════════════════════════════════════════════════════════════
+
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """
+    Custom permission:
+    - Only users with Admin profile can create, update, delete contests
+    - All authenticated users can view contests
+    """
+    def has_permission(self, request, view):
+        # Allow read-only access for all authenticated users
+        if request.method in permissions.SAFE_METHODS:
+            return request.user and request.user.is_authenticated
+        
+        # Write permissions only for admins
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Check if user has admin profile
+        try:
+            admin = Admin.objects.get(profile__user=request.user)
+            return admin.is_admin
+        except Admin.DoesNotExist:
+            return False
+
+
+class ContestViewSet(viewsets.ModelViewSet):
+    """
+    Contest ViewSet for full CRUD operations.
+    
+    Permissions:
+    - CREATE/UPDATE/DELETE: Only users with Admin role
+    - LIST/RETRIEVE: All authenticated users (users and contributors)
+    
+    Endpoints:
+    - GET /api/accounts/contests/ - List all active contests
+    - GET /api/accounts/contests/{id}/ - Get contest details
+    - POST /api/accounts/contests/ - Create contest (admin only)
+    - PUT/PATCH /api/accounts/contests/{id}/ - Update contest (admin only)
+    - DELETE /api/accounts/contests/{id}/ - Delete contest (admin only)
+    - POST /api/accounts/contests/{id}/join/ - Join contest (contributors only)
+    """
+    queryset = Contest.objects.all()
+    permission_classes = [IsAdminOrReadOnly]
+    
+    def get_serializer_class(self):
+        """Use detailed serializer for single contest view"""
+        if self.action == 'retrieve':
+            return ContestDetailSerializer
+        return ContestSerializer
+    
+    def get_queryset(self):
+        """
+        Optionally filter contests by category, active status, etc.
+        """
+        queryset = Contest.objects.all()
+        
+        # Filter by active status
+        is_active = self.request.query_params.get('is_active', None)
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+        
+        # Filter by category
+        category = self.request.query_params.get('category', None)
+        if category:
+            queryset = queryset.filter(category=category)
+        
+        return queryset.order_by('-created_at')
+    
+    def perform_create(self, serializer):
+        """Automatically set created_by to current admin"""
+        try:
+            admin = Admin.objects.get(profile__user=self.request.user)
+            serializer.save(created_by=admin)
+        except Admin.DoesNotExist:
+            # This shouldn't happen due to permission check, but just in case
+            raise permissions.PermissionDenied("Only admins can create contests")
+    
+    @extend_schema(
+        request=None,
+        responses={200: ContestParticipantSerializer},
+        description="Join a contest as a contributor"
+    )
+    @decorators.action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def join(self, request, pk=None):
+        """
+        Allow contributors to join a contest.
+        Contributors are automatically checked for eligibility based on their profile attributes.
+        """
+        contest = self.get_object()
+        
+        # Check if user has a profile
+        try:
+            profile = request.user.profile
+        except Profile.DoesNotExist:
+            return Response(
+                {'error': 'Profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if profile is a contributor
+        if profile.role != 'contributor':
+            return Response(
+                {'error': 'Only contributors can join contests'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if contest is full
+        if contest.joined >= contest.max_participants:
+            return Response(
+                {'error': 'Contest is full'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if already joined
+        if ContestParticipant.objects.filter(contest=contest, contributor=profile).exists():
+            return Response(
+                {'error': 'Already joined this contest'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check eligibility based on attributes
+        is_eligible = self._check_eligibility(profile, contest)
+        if not is_eligible:
+            return Response(
+                {'error': 'You do not meet the contest requirements'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create participant entry
+        participant = ContestParticipant.objects.create(
+            contest=contest,
+            contributor=profile,
+            auto_entry=False
+        )
+        
+        # Increment joined count
+        contest.joined += 1
+        contest.save()
+        
+        return Response({
+            'message': 'Successfully joined the contest',
+            'participant': ContestParticipantSerializer(participant).data
+        }, status=status.HTTP_201_CREATED)
+    
+    def _check_eligibility(self, profile, contest):
+        """
+        Check if a contributor is eligible for a contest based on attributes.
+        Returns True if all contest attribute requirements are met.
+        """
+        contest_attrs = contest.attributes or {}
+        
+        for category, required_values in contest_attrs.items():
+            if not required_values:  # Skip if no values specified
+                continue
+            
+            # Skip "All" values
+            if "All" in required_values:
+                continue
+            
+            # Get contributor's value for this attribute
+            contributor_value = None
+            
+            # Map contest attribute names to profile fields
+            attr_mapping = {
+                "Gender": "gender",
+                "Age": "age",  # This needs special handling
+                "Skin Tone": "skin_tone",
+                "Body Type": "body_type",
+                "Hair Color": "hair_color",
+                "Shoe Size": "shoe_size",
+                "Bust Size": "bust_size",
+                "Penis Size": "penis_length",
+            }
+            
+            profile_field = attr_mapping.get(category)
+            if profile_field:
+                contributor_value = getattr(profile, profile_field, None)
+            
+            # Check if contributor's value matches any of the required values
+            if contributor_value and contributor_value not in required_values:
+                return False
+        
+        return True
+    
+    @extend_schema(
+        responses={200: ContestParticipantSerializer(many=True)},
+        description="Get all participants of a contest"
+    )
+    @decorators.action(detail=True, methods=['get'])
+    def participants(self, request, pk=None):
+        """Get all participants of a specific contest"""
+        contest = self.get_object()
+        participants = contest.participants.all()
+        serializer = ContestParticipantSerializer(participants, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        responses={200: ProfileSerializer(many=True)},
+        description="Get all eligible contributors for a contest based on attributes"
+    )
+    @decorators.action(detail=True, methods=['get'], permission_classes=[IsAdminOrReadOnly])
+    def eligible_contributors(self, request, pk=None):
+        """
+        Get all contributors who are eligible for this contest based on attributes.
+        Admin only endpoint.
+        """
+        contest = self.get_object()
+        
+        # Get all contributors
+        contributors = Profile.objects.filter(role='contributor')
+        
+        # Filter by eligibility
+        eligible = [c for c in contributors if self._check_eligibility(c, contest)]
+        
+        serializer = ProfileSerializer(eligible, many=True)
+        return Response(serializer.data)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SMOKE SIGNALS VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class SmokeSignalViewSet(viewsets.ModelViewSet):
+    """
+    Smoke Signal ViewSet for notification management.
+    Supports listing, summary statistics, and sending notifications via SMS/Email.
+    """
+    queryset = SmokeSignal.objects.all()
+    serializer_class = SmokeSignalSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter by time range if provided"""
+        qs = SmokeSignal.objects.all().order_by('-timestamp')
+        range_param = self.request.query_params.get('range', '24h')
+        limit = self.request.query_params.get('limit', None)
+        
+        # Apply time range filter
+        qs = _filter_by_range(qs, range_param)
+        
+        # Apply limit if specified (must be done AFTER ordering)
+        if limit and limit.isdigit():
+            qs = qs[:int(limit)]
+        
+        return qs
+    
+    @extend_schema(
+        summary="List Smoke Signals",
+        description="Retrieve all smoke signals with optional filtering by time range and limit",
+        parameters=[
+            OpenApiParameter(
+                name='range',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description='Time range filter: 24h or 7d',
+                required=False,
+                default='24h',
+                enum=['24h', '7d']
+            ),
+            OpenApiParameter(
+                name='limit',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                description='Maximum number of results to return',
+                required=False,
+                default=1000
+            ),
+        ],
+        responses={200: SmokeSignalSerializer(many=True)},
+        tags=['Smoke Signals']
+    )
+    def list(self, request, *args, **kwargs):
+        """List all smoke signals with optional filtering"""
+        return super().list(request, *args, **kwargs)
+    
+    @extend_schema(
+        summary="Smoke Signals Summary",
+        description="Get summary statistics including total, delivered, failed, pending counts and message frequency",
+        parameters=[
+            OpenApiParameter(
+                name='range',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description='Time range filter: 24h or 7d',
+                required=False,
+                default='24h',
+                enum=['24h', '7d']
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="Summary statistics",
+                response={
+                    'type': 'object',
+                    'properties': {
+                        'total': {'type': 'integer'},
+                        'delivered': {'type': 'integer'},
+                        'failed': {'type': 'integer'},
+                        'pending': {'type': 'integer'},
+                        'email_total': {'type': 'integer'},
+                        'sms_total': {'type': 'integer'},
+                        'unique_senders': {'type': 'integer'},
+                        'message_frequency': {'type': 'array'}
+                    }
+                }
+            )
+        },
+        tags=['Smoke Signals']
+    )
+    @decorators.action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        """Get summary statistics for smoke signals"""
+        range_param = request.query_params.get('range', '24h')
+        qs = _filter_by_range(SmokeSignal.objects.all(), range_param)
+
+        total = qs.count()
+        delivered = qs.filter(status='Delivered').count()
+        failed = qs.filter(status='Failed').count()
+        pending = qs.filter(status='Pending').count()
+        email_total = qs.filter(channel='Email').count()
+        sms_total = qs.filter(channel='SMS').count()
+        unique_senders = qs.values('sender').distinct().count()
+
+        message_frequency = (
+            qs.values('message')
+              .annotate(count=Count('id'))
+              .order_by('-count')
+        )
+
+        return Response({
+            'total': total,
+            'delivered': delivered,
+            'failed': failed,
+            'pending': pending,
+            'email_total': email_total,
+            'sms_total': sms_total,
+            'unique_senders': unique_senders,
+            'message_frequency': list(message_frequency),
+        }, status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        summary="Send Smoke Signal",
+        description="Send a notification via SMS or Email. For SMS, requires Twilio configuration.",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'to': {
+                        'type': 'string',
+                        'description': 'Recipient phone number (+1234567890) or email address',
+                        'example': '+1234567890'
+                    },
+                    'channel': {
+                        'type': 'string',
+                        'enum': ['SMS', 'Email'],
+                        'description': 'Communication channel',
+                        'example': 'SMS'
+                    },
+                    'message': {
+                        'type': 'string',
+                        'description': 'The notification message to send',
+                        'example': 'Welcome to the platform!'
+                    },
+                    'sender': {
+                        'type': 'string',
+                        'description': 'Sender name (optional, defaults to System)',
+                        'example': 'Admin'
+                    }
+                },
+                'required': ['to', 'channel', 'message']
+            }
+        },
+        responses={
+            201: SmokeSignalSerializer,
+            400: OpenApiResponse(description='Missing required fields'),
+            500: OpenApiResponse(description='Twilio not configured or sending failed')
+        },
+        examples=[
+            OpenApiExample(
+                'Send SMS',
+                value={
+                    'to': '+1234567890',
+                    'channel': 'SMS',
+                    'message': 'Your contest is starting soon!',
+                    'sender': 'Admin'
+                },
+                request_only=True
+            ),
+            OpenApiExample(
+                'Send Email',
+                value={
+                    'to': 'user@example.com',
+                    'channel': 'Email',
+                    'message': 'Password reset link sent',
+                    'sender': 'System'
+                },
+                request_only=True
+            )
+        ],
+        tags=['Smoke Signals']
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='send')
+    def send_signal(self, request):
+        """Send a smoke signal notification via SMS or Email"""
+        to = request.data.get('to')
+        channel = request.data.get('channel')
+        message = request.data.get('message')
+        sender = request.data.get('sender', 'System')
+
+        if not all([to, channel, message]):
+            return Response(
+                {'error': 'to, channel, and message are required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        status_value = 'Pending'
+
+        # Send SMS via Twilio if channel is SMS
+        if channel == 'SMS':
+            if not TWILIO_AVAILABLE:
+                return Response(
+                    {'error': 'Twilio is not installed on server'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            try:
+                account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+                auth_token = os.getenv('TWILIO_AUTH_TOKEN')
+                twilio_from = os.getenv('TWILIO_PHONE_NUMBER')
+                
+                if not all([account_sid, auth_token, twilio_from]):
+                    return Response(
+                        {'error': 'Twilio credentials not configured in environment'}, 
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                
+                client = Client(account_sid, auth_token)
+                resp = client.messages.create(
+                    body=message,
+                    from_=twilio_from,
+                    to=to
+                )
+                status_value = 'Delivered'
+            except Exception as e:
+                status_value = 'Failed'
+                print(f"Twilio error: {str(e)}")
+
+        # TODO: Implement Email sending if needed
+        elif channel == 'Email':
+            # For now, just mark as pending
+            # You can implement email sending using Django's send_mail or other email services
+            status_value = 'Pending'
+
+        # Create smoke signal record
+        rec = SmokeSignal.objects.create(
+            sender=sender,
+            channel=channel,
+            status=status_value,
+            message=message,
+        )
+        
+        return Response(
+            SmokeSignalSerializer(rec).data, 
+            status=status.HTTP_201_CREATED
+        )
+
+

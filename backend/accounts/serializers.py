@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal
 
 
 # ── Register (role-aware)
@@ -383,3 +383,36 @@ class ContestDetailSerializer(serializers.ModelSerializer):
     
     def get_participants_count(self, obj):
         return obj.participants.count()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SMOKE SIGNAL SERIALIZER
+# ══════════════════════════════════════════════════════════════════════
+
+class SmokeSignalSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Smoke Signal notifications.
+    Tracks Email and SMS communications sent by the system.
+    """
+    class Meta:
+        model = SmokeSignal
+        fields = ['id', 'sender', 'channel', 'status', 'timestamp', 'message']
+        read_only_fields = ['id', 'timestamp']
+
+
+# ══════════════════════════════════════════════════════════════════════
+# DASHBOARD STATISTICS SERIALIZER
+# ══════════════════════════════════════════════════════════════════════
+
+class DashboardStatsSerializer(serializers.Serializer):
+    """
+    Serializer for admin dashboard statistics.
+    Shows overview of users, contributors, and wallet deposits.
+    """
+    total_contributors = serializers.IntegerField(read_only=True)
+    total_users = serializers.IntegerField(read_only=True)
+    total_wallet_deposits = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_payments = serializers.IntegerField(read_only=True)
+    recent_contributors = serializers.IntegerField(read_only=True, help_text="Contributors joined in last 30 days")
+    recent_users = serializers.IntegerField(read_only=True, help_text="Users joined in last 30 days")
+    active_contests = serializers.IntegerField(read_only=True)
