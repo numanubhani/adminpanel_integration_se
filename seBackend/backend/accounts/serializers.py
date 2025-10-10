@@ -29,13 +29,25 @@ class RegisterSerializer(serializers.Serializer):
 # ── Profile (basic user GET/PATCH)
 class ProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", required=False)
+    username = serializers.CharField(source="user.username", read_only=True)
     screen_name = serializers.CharField(required=False)
     password = serializers.CharField(write_only=True, required=False)
+    profile_picture = serializers.SerializerMethodField()
+    card_number = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Profile
         fields = "__all__"
         read_only_fields = ("role",)
+    
+    def get_profile_picture(self, obj):
+        """Return full URL for profile picture"""
+        if obj.profile_picture:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_picture.url)
+            return obj.profile_picture.url
+        return None
 
     def update(self, instance, validated_data):
         # nested user (email)
@@ -51,6 +63,11 @@ class ProfileSerializer(serializers.ModelSerializer):
         if password:
             instance.user.set_password(password)
             instance.user.save()
+
+        # Handle profile_picture from request.FILES if present
+        request = self.context.get('request')
+        if request and 'profile_picture' in request.FILES:
+            instance.profile_picture = request.FILES['profile_picture']
 
         # profile fields (incl. id_document via multipart)
         for attr, value in validated_data.items():

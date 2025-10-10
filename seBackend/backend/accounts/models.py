@@ -56,6 +56,12 @@ class Profile(models.Model):
 
     # ID Document upload
     id_document = models.FileField(upload_to='id_documents/', blank=True, null=True)
+    
+    # Profile Picture
+    profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
+    
+    # Card Details (for admin panel)
+    card_number = models.CharField(max_length=20, blank=True)
 
     def __str__(self) -> str:
         return f"{self.user.username} ({self.role})"

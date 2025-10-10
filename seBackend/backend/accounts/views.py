@@ -94,7 +94,7 @@ def login(request):
         {
             "access": str(refresh.access_token),
             "refresh": str(refresh),
-            "profile": ProfileSerializer(user.profile).data,
+            "profile": ProfileSerializer(user.profile, context={'request': request}).data,
         }
     )
 
@@ -102,7 +102,7 @@ def login(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me(request):
-    return Response(ProfileSerializer(request.user.profile).data)
+    return Response(ProfileSerializer(request.user.profile, context={'request': request}).data)
 
 
 @extend_schema(
@@ -130,7 +130,7 @@ def register_user(request):
         {
             "access": str(refresh.access_token),
             "refresh": str(refresh),
-            "profile": ProfileSerializer(user.profile).data,
+            "profile": ProfileSerializer(user.profile, context={'request': request}).data,
         },
         status=status.HTTP_201_CREATED,
     )
@@ -188,7 +188,7 @@ def register_contributor(request):
         {
             "access": str(refresh.access_token),
             "refresh": str(refresh),
-            "profile": ProfileSerializer(user.profile).data,
+            "profile": ProfileSerializer(user.profile, context={'request': request}).data,
         },
         status=status.HTTP_201_CREATED,
     )
