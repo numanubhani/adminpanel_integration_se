@@ -109,3 +109,8 @@ class ContestParticipantAdmin(admin.ModelAdmin):
         return obj.contributor.screen_name or obj.contributor.user.email
     get_contributor_name.short_description = "Contributor"
     get_contributor_name.admin_order_field = "contributor__screen_name"
+
+
+admin.site.register(ContestParticipant)
+admin.site.register(Contest)
+admin.site.register(Admin)
