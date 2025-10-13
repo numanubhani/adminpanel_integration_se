@@ -320,6 +320,7 @@ class ContestSerializer(serializers.ModelSerializer):
     Used by admin to create/edit contests and by users/contributors to view contests.
     """
     created_by_name = serializers.CharField(source='created_by.profile.screen_name', read_only=True)
+    joined = serializers.SerializerMethodField()
     
     class Meta:
         model = Contest
@@ -330,6 +331,10 @@ class ContestSerializer(serializers.ModelSerializer):
             'created_by', 'created_by_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
+    
+    def get_joined(self, obj):
+        """Count how many contributors have joined this contest"""
+        return obj.participants.count()
     
     def validate(self, data):
         """Validate that end_time is after start_time"""

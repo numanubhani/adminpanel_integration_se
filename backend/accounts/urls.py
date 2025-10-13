@@ -43,6 +43,9 @@ urlpatterns = [
     # Dashboard endpoints (keeping old URLs)
     path("dashboard/stats/", DashboardViewSet.as_view({'get': 'stats'}), name='dashboard-stats'),
     
+    # Contest endpoints (keeping old URLs - my-contests handled by router now)
+    # The my-contests endpoint is now available at: /api/accounts/contests/my-contests/
+    
     # Router endpoints (includes body-part-images, admin, contests, smoke-signals)
     path("", include(router.urls)),
 ]

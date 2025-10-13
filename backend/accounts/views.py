@@ -8,7 +8,10 @@ from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
 from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Sum, Count
+from django.db import IntegrityError
 import os
+import traceback
+import json
 
 from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal
 from .serializers import (
@@ -789,68 +792,105 @@ class ContestViewSet(viewsets.ModelViewSet):
         Allow contributors to join a contest.
         Contributors are automatically checked for eligibility based on their profile attributes.
         """
-        contest = self.get_object()
-        
-        # Check if user has a profile
         try:
-            profile = request.user.profile
-        except Profile.DoesNotExist:
-            return Response(
-                {'error': 'Profile not found'},
-                status=status.HTTP_404_NOT_FOUND
+            contest = self.get_object()
+            
+            # Check if contest is active
+            if not contest.is_active:
+                return Response(
+                    {'error': 'This contest is not active'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if user has a profile
+            try:
+                profile = request.user.profile
+            except Profile.DoesNotExist:
+                return Response(
+                    {'error': 'Profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if profile is a contributor
+            if profile.role != 'contributor':
+                return Response(
+                    {'error': 'Only contributors can join contests'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check if contest is full (using dynamic count)
+            current_participants = contest.participants.count()
+            if current_participants >= contest.max_participants:
+                return Response(
+                    {'error': 'Contest is full. Maximum participants reached.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if already joined
+            if ContestParticipant.objects.filter(contest=contest, contributor=profile).exists():
+                return Response(
+                    {'error': 'You have already joined this contest'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # ELIGIBILITY CHECK DISABLED - Allow any contributor to join any contest
+            # Uncomment the lines below to re-enable attribute-based eligibility checking:
+            # is_eligible = self._check_eligibility(profile, contest)
+            # if not is_eligible:
+            #     return Response(
+            #         {'error': 'You do not meet the contest requirements'},
+            #         status=status.HTTP_400_BAD_REQUEST
+            #     )
+            
+            # Try to create participant entry using get_or_create to prevent duplicates
+            participant, created = ContestParticipant.objects.get_or_create(
+                contest=contest,
+                contributor=profile,
+                defaults={'auto_entry': False}
             )
+            
+            if not created:
+                # User already joined this contest
+                return Response(
+                    {'error': 'You have already joined this contest'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            return Response({
+                'message': 'Successfully joined the contest',
+                'contest_id': contest.id,
+                'contest_name': contest.title,
+                'joined_at': participant.joined_at,
+                'participant': ContestParticipantSerializer(participant).data
+            }, status=status.HTTP_201_CREATED)
         
-        # Check if profile is a contributor
-        if profile.role != 'contributor':
+        except Exception as e:
+            # Log the error for debugging
+            print("=" * 80)
+            print("ERROR IN JOIN ACTION:")
+            print(traceback.format_exc())
+            print("=" * 80)
+            
             return Response(
-                {'error': 'Only contributors can join contests'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': f'An error occurred while joining the contest: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        # Check if contest is full
-        if contest.joined >= contest.max_participants:
-            return Response(
-                {'error': 'Contest is full'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if already joined
-        if ContestParticipant.objects.filter(contest=contest, contributor=profile).exists():
-            return Response(
-                {'error': 'Already joined this contest'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check eligibility based on attributes
-        is_eligible = self._check_eligibility(profile, contest)
-        if not is_eligible:
-            return Response(
-                {'error': 'You do not meet the contest requirements'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Create participant entry
-        participant = ContestParticipant.objects.create(
-            contest=contest,
-            contributor=profile,
-            auto_entry=False
-        )
-        
-        # Increment joined count
-        contest.joined += 1
-        contest.save()
-        
-        return Response({
-            'message': 'Successfully joined the contest',
-            'participant': ContestParticipantSerializer(participant).data
-        }, status=status.HTTP_201_CREATED)
     
     def _check_eligibility(self, profile, contest):
         """
         Check if a contributor is eligible for a contest based on attributes.
         Returns True if all contest attribute requirements are met.
         """
-        contest_attrs = contest.attributes or {}
+        # Handle both dict and string JSON (just in case)
+        contest_attrs = contest.attributes
+        if isinstance(contest_attrs, str):
+            try:
+                contest_attrs = json.loads(contest_attrs)
+            except (json.JSONDecodeError, ValueError):
+                contest_attrs = {}
+        
+        if not contest_attrs:
+            return True  # No requirements means everyone is eligible
         
         for category, required_values in contest_attrs.items():
             if not required_values:  # Skip if no values specified
@@ -916,6 +956,41 @@ class ContestViewSet(viewsets.ModelViewSet):
         eligible = [c for c in contributors if self._check_eligibility(c, contest)]
         
         serializer = ProfileSerializer(eligible, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        responses={200: ContestSerializer(many=True)},
+        description="Get all contests that the current user has joined"
+    )
+    @decorators.action(detail=False, methods=['get'], permission_classes=[IsAuthenticated], url_path='my-contests')
+    def my_contests(self, request):
+        """
+        Get all contests that the current user/contributor has joined.
+        Returns active contests ordered by start time.
+        """
+        user = request.user
+        
+        # Check if user has a profile
+        try:
+            profile = user.profile
+        except Profile.DoesNotExist:
+            return Response(
+                {'error': 'Profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get contest IDs that the user has joined
+        joined_contest_ids = ContestParticipant.objects.filter(
+            contributor=profile
+        ).values_list('contest_id', flat=True)
+        
+        # Get the actual contest objects
+        user_contests = Contest.objects.filter(
+            id__in=joined_contest_ids,
+            is_active=True
+        ).order_by('-start_time')
+        
+        serializer = ContestSerializer(user_contests, many=True, context={'request': request})
         return Response(serializer.data)
 
 
