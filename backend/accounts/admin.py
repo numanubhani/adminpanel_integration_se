@@ -113,8 +113,8 @@ class ContestParticipantAdmin(admin.ModelAdmin):
 
 @admin.register(SmokeSignal)
 class SmokeSignalAdmin(admin.ModelAdmin):
-    list_display = ('id', 'sender', 'channel', 'status', 'timestamp', 'message')
+    list_display = ('id', 'sender', 'recipient', 'channel', 'status', 'timestamp', 'message')
     list_filter = ('channel', 'status', 'timestamp')
-    search_fields = ('sender', 'message')
+    search_fields = ('sender', 'recipient', 'message')
     readonly_fields = ('timestamp',)
     ordering = ('-timestamp',)

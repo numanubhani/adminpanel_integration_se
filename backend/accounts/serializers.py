@@ -393,7 +393,6 @@ class ContestDetailSerializer(serializers.ModelSerializer):
 # ══════════════════════════════════════════════════════════════════════
 # SMOKE SIGNAL SERIALIZER
 # ══════════════════════════════════════════════════════════════════════
-
 class SmokeSignalSerializer(serializers.ModelSerializer):
     """
     Serializer for Smoke Signal notifications.
@@ -401,9 +400,8 @@ class SmokeSignalSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = SmokeSignal
-        fields = ['id', 'sender', 'channel', 'status', 'timestamp', 'message']
+        fields = ['id', 'sender', 'recipient', 'channel', 'status', 'timestamp', 'message']
         read_only_fields = ['id', 'timestamp']
-
 
 # ══════════════════════════════════════════════════════════════════════
 # DASHBOARD STATISTICS SERIALIZER

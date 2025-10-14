@@ -203,6 +203,7 @@ class SmokeSignal(models.Model):
     ]
 
     sender = models.CharField(max_length=200)
+    recipient = models.CharField(max_length=200, blank=True)  # Email or phone number of recipient
     channel = models.CharField(max_length=10, choices=CHANNEL_CHOICES)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -214,4 +215,4 @@ class SmokeSignal(models.Model):
         verbose_name_plural = "Smoke Signals"
 
     def __str__(self):
-        return f'{self.channel} | {self.status} | {self.sender} | {self.message}'
+        return f'{self.channel} | {self.status} | {self.sender} → {self.recipient} | {self.message}'

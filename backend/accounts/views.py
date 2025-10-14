@@ -1,5 +1,7 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password
+from django.core.mail import send_mail
+from django.conf import settings
 from rest_framework import status, permissions, viewsets, decorators
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -998,188 +1000,67 @@ class ContestViewSet(viewsets.ModelViewSet):
 # SMOKE SIGNALS VIEWSET
 # ══════════════════════════════════════════════════════════════════════
 
+import os
+import traceback
+from django.conf import settings
+from django.core.mail import send_mail
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from .models import SmokeSignal
+from .serializers import SmokeSignalSerializer
+
+try:
+    from twilio.rest import Client
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
+
+
 class SmokeSignalViewSet(viewsets.ModelViewSet):
     """
-    Smoke Signal ViewSet for notification management.
-    Supports listing, summary statistics, and sending notifications via SMS/Email.
+    Simple ViewSet for sending and listing smoke signals via Email or SMS.
+    Integrated with Swagger (default DRF schema).
     """
-    queryset = SmokeSignal.objects.all()
+    queryset = SmokeSignal.objects.all().order_by('-timestamp')
     serializer_class = SmokeSignalSerializer
     permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        """Filter by time range if provided"""
-        qs = SmokeSignal.objects.all().order_by('-timestamp')
-        range_param = self.request.query_params.get('range', '24h')
-        limit = self.request.query_params.get('limit', None)
-        
-        # Apply time range filter
-        qs = _filter_by_range(qs, range_param)
-        
-        # Apply limit if specified (must be done AFTER ordering)
-        if limit and limit.isdigit():
-            qs = qs[:int(limit)]
-        
-        return qs
-    
-    @extend_schema(
-        summary="List Smoke Signals",
-        description="Retrieve all smoke signals with optional filtering by time range and limit",
-        parameters=[
-            OpenApiParameter(
-                name='range',
-                type=str,
-                location=OpenApiParameter.QUERY,
-                description='Time range filter: 24h or 7d',
-                required=False,
-                default='24h',
-                enum=['24h', '7d']
-            ),
-            OpenApiParameter(
-                name='limit',
-                type=int,
-                location=OpenApiParameter.QUERY,
-                description='Maximum number of results to return',
-                required=False,
-                default=1000
-            ),
-        ],
-        responses={200: SmokeSignalSerializer(many=True)},
-        tags=['Smoke Signals']
-    )
-    def list(self, request, *args, **kwargs):
-        """List all smoke signals with optional filtering"""
-        return super().list(request, *args, **kwargs)
-    
-    @extend_schema(
-        summary="Smoke Signals Summary",
-        description="Get summary statistics including total, delivered, failed, pending counts and message frequency",
-        parameters=[
-            OpenApiParameter(
-                name='range',
-                type=str,
-                location=OpenApiParameter.QUERY,
-                description='Time range filter: 24h or 7d',
-                required=False,
-                default='24h',
-                enum=['24h', '7d']
-            ),
-        ],
-        responses={
-            200: OpenApiResponse(
-                description="Summary statistics",
-                response={
-                    'type': 'object',
-                    'properties': {
-                        'total': {'type': 'integer'},
-                        'delivered': {'type': 'integer'},
-                        'failed': {'type': 'integer'},
-                        'pending': {'type': 'integer'},
-                        'email_total': {'type': 'integer'},
-                        'sms_total': {'type': 'integer'},
-                        'unique_senders': {'type': 'integer'},
-                        'message_frequency': {'type': 'array'}
-                    }
-                }
-            )
-        },
-        tags=['Smoke Signals']
-    )
-    @decorators.action(detail=False, methods=['get'], url_path='summary')
-    def summary(self, request):
-        """Get summary statistics for smoke signals"""
-        range_param = request.query_params.get('range', '24h')
-        qs = _filter_by_range(SmokeSignal.objects.all(), range_param)
 
-        total = qs.count()
-        delivered = qs.filter(status='Delivered').count()
-        failed = qs.filter(status='Failed').count()
-        pending = qs.filter(status='Pending').count()
-        email_total = qs.filter(channel='Email').count()
-        sms_total = qs.filter(channel='SMS').count()
-        unique_senders = qs.values('sender').distinct().count()
-
-        message_frequency = (
-            qs.values('message')
-              .annotate(count=Count('id'))
-              .order_by('-count')
-        )
-
-        return Response({
-            'total': total,
-            'delivered': delivered,
-            'failed': failed,
-            'pending': pending,
-            'email_total': email_total,
-            'sms_total': sms_total,
-            'unique_senders': unique_senders,
-            'message_frequency': list(message_frequency),
-        }, status=status.HTTP_200_OK)
-    
-    @extend_schema(
-        summary="Send Smoke Signal",
-        description="Send a notification via SMS or Email. For SMS, requires Twilio configuration.",
-        request={
-            'application/json': {
-                'type': 'object',
-                'properties': {
-                    'to': {
-                        'type': 'string',
-                        'description': 'Recipient phone number (+1234567890) or email address',
-                        'example': '+1234567890'
-                    },
-                    'channel': {
-                        'type': 'string',
-                        'enum': ['SMS', 'Email'],
-                        'description': 'Communication channel',
-                        'example': 'SMS'
-                    },
-                    'message': {
-                        'type': 'string',
-                        'description': 'The notification message to send',
-                        'example': 'Welcome to the platform!'
-                    },
-                    'sender': {
-                        'type': 'string',
-                        'description': 'Sender name (optional, defaults to System)',
-                        'example': 'Admin'
-                    }
-                },
-                'required': ['to', 'channel', 'message']
-            }
-        },
-        responses={
-            201: SmokeSignalSerializer,
-            400: OpenApiResponse(description='Missing required fields'),
-            500: OpenApiResponse(description='Twilio not configured or sending failed')
-        },
-        examples=[
-            OpenApiExample(
-                'Send SMS',
-                value={
-                    'to': '+1234567890',
-                    'channel': 'SMS',
-                    'message': 'Your contest is starting soon!',
-                    'sender': 'Admin'
-                },
-                request_only=True
-            ),
-            OpenApiExample(
-                'Send Email',
-                value={
-                    'to': 'user@example.com',
-                    'channel': 'Email',
-                    'message': 'Password reset link sent',
-                    'sender': 'System'
-                },
-                request_only=True
-            )
-        ],
-        tags=['Smoke Signals']
-    )
-    @decorators.action(detail=False, methods=['post'], url_path='send')
-    def send_signal(self, request):
-        """Send a smoke signal notification via SMS or Email"""
+    @action(detail=False, methods=['post'])
+    def send(self, request):
+        """
+        Send a smoke signal message via Email or SMS.
+        ---
+        parameters:
+            - name: to
+              description: Recipient email address or phone number (+1234567890)
+              required: true
+              type: string
+              paramType: form
+            - name: channel
+              description: Choose 'Email' or 'SMS'
+              required: true
+              type: string
+              paramType: form
+            - name: message
+              description: Message content
+              required: true
+              type: string
+              paramType: form
+            - name: sender
+              description: Sender name (optional)
+              required: false
+              type: string
+              paramType: form
+        responses:
+            201:
+                description: Message sent successfully
+            400:
+                description: Missing or invalid parameters
+            500:
+                description: Sending failed
+        """
         to = request.data.get('to')
         channel = request.data.get('channel')
         message = request.data.get('message')
@@ -1187,58 +1068,61 @@ class SmokeSignalViewSet(viewsets.ModelViewSet):
 
         if not all([to, channel, message]):
             return Response(
-                {'error': 'to, channel, and message are required'}, 
+                {'error': 'Fields "to", "channel", and "message" are required.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         status_value = 'Pending'
 
-        # Send SMS via Twilio if channel is SMS
-        if channel == 'SMS':
-            if not TWILIO_AVAILABLE:
-                return Response(
-                    {'error': 'Twilio is not installed on server'}, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        try:
+            # Handle Email
+            if channel.lower() == 'email':
+                send_mail(
+                    subject=f"Notification from {sender}",
+                    message=message,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[to],
+                    fail_silently=False,
                 )
-            try:
+                status_value = 'Delivered'
+
+            # Handle SMS
+            elif channel.lower() == 'sms':
+                if not TWILIO_AVAILABLE:
+                    raise RuntimeError("Twilio library not installed.")
                 account_sid = os.getenv('TWILIO_ACCOUNT_SID')
                 auth_token = os.getenv('TWILIO_AUTH_TOKEN')
                 twilio_from = os.getenv('TWILIO_PHONE_NUMBER')
-                
+
                 if not all([account_sid, auth_token, twilio_from]):
-                    return Response(
-                        {'error': 'Twilio credentials not configured in environment'}, 
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
-                
+                    raise RuntimeError("Twilio credentials missing or not configured.")
+
                 client = Client(account_sid, auth_token)
-                resp = client.messages.create(
-                    body=message,
-                    from_=twilio_from,
-                    to=to
-                )
+                client.messages.create(body=message, from_=twilio_from, to=to)
                 status_value = 'Delivered'
-            except Exception as e:
-                status_value = 'Failed'
-                print(f"Twilio error: {str(e)}")
 
-        # TODO: Implement Email sending if needed
-        elif channel == 'Email':
-            # For now, just mark as pending
-            # You can implement email sending using Django's send_mail or other email services
-            status_value = 'Pending'
+            else:
+                return Response(
+                    {'error': 'Invalid channel. Must be "Email" or "SMS".'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        # Create smoke signal record
-        rec = SmokeSignal.objects.create(
+        except Exception as e:
+            status_value = 'Failed'
+            traceback.print_exc()
+            return Response(
+                {'error': f'Failed to send message: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # Create and save record
+        record = SmokeSignal.objects.create(
             sender=sender,
+            recipient=to,
             channel=channel,
             status=status_value,
-            message=message,
-        )
-        
-        return Response(
-            SmokeSignalSerializer(rec).data, 
-            status=status.HTTP_201_CREATED
+            message=message
         )
 
-
+        serializer = SmokeSignalSerializer(record)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
