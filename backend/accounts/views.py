@@ -457,6 +457,31 @@ class BodyPartImageViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+    
+    @decorators.action(detail=False, methods=['get'], url_path='counts')
+    def image_counts(self, request):
+        """
+        Get count of images by category for the current user.
+        Returns total images and breakdown by body part category.
+        """
+        user = request.user
+        
+        # Get all images for the user grouped by body_part
+        images = BodyPartImage.objects.filter(user=user)
+        
+        # Count by category
+        from django.db.models import Count
+        category_counts = images.values('body_part').annotate(count=Count('id')).order_by('body_part')
+        
+        # Format response
+        counts_dict = {item['body_part']: item['count'] for item in category_counts}
+        total_count = images.count()
+        
+        return Response({
+            'total': total_count,
+            'by_category': counts_dict,
+            'categories': list(category_counts)
+        }, status=status.HTTP_200_OK)
 
 
 # ══════════════════════════════════════════════════════════════════════
