@@ -236,3 +236,26 @@ class FavoriteImage(models.Model):
 
     def __str__(self):
         return f"{self.user.username} favorited {self.body_part_image.body_part} by {self.body_part_image.user.username}"
+
+
+class Vote(models.Model):
+    """
+    Model for tracking votes in contests.
+    Users can vote once per contest for a specific participant.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="votes")
+    contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name="votes")
+    participant = models.ForeignKey(ContestParticipant, on_delete=models.CASCADE, related_name="votes")
+    voted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'contest')
+        ordering = ['-voted_at']
+        verbose_name = "Vote"
+        verbose_name_plural = "Votes"
+        indexes = [
+            models.Index(fields=['contest', 'participant']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} voted for {self.participant.contributor.screen_name} in {self.contest.title}"

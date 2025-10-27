@@ -15,7 +15,7 @@ import os
 import traceback
 import json
 
-from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage
+from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, Vote
 from .serializers import (
     RegisterSerializer,
     ProfileSerializer,
@@ -31,6 +31,8 @@ from .serializers import (
     BodyPartImageSerializer,
     FavoriteImageSerializer,
     AddFavoriteSerializer,
+    VoteSerializer,
+    CastVoteSerializer,
 )
 
 # Optional: Twilio for SMS sending
@@ -1326,4 +1328,112 @@ class FavoriteImageViewSet(viewsets.ModelViewSet):
             return Response(
                 {'message': 'Image added to favorites', 'is_favorite': True, 'favorite': serializer.data},
                 status=status.HTTP_200_OK
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# VOTING VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class VoteViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing votes in contests.
+    Users can vote once per contest.
+    """
+    serializer_class = VoteSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Return votes filtered by contest if specified"""
+        queryset = Vote.objects.all().select_related('user', 'contest', 'participant')
+        
+        contest_id = self.request.query_params.get('contest', None)
+        if contest_id:
+            queryset = queryset.filter(contest_id=contest_id)
+        
+        # Users can only see their own votes
+        if self.request.user.profile.role == 'user':
+            queryset = queryset.filter(user=self.request.user)
+        
+        return queryset
+
+    @extend_schema(
+        summary="Cast a vote for a participant in a contest",
+        request=CastVoteSerializer,
+        responses={
+            201: VoteSerializer,
+            400: OpenApiResponse(description="Already voted or invalid participant"),
+        }
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='cast')
+    def cast_vote(self, request):
+        """
+        Cast a vote for a participant in a contest.
+        Users can only vote once per contest.
+        """
+        serializer = CastVoteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        participant_id = serializer.validated_data['participant_id']
+        
+        try:
+            participant = ContestParticipant.objects.get(id=participant_id)
+        except ContestParticipant.DoesNotExist:
+            return Response(
+                {'error': 'Participant not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        contest = participant.contest
+
+        # Check if user is a contributor (contributors can't vote)
+        if request.user.profile.role != 'user':
+            return Response(
+                {'error': 'Only users can vote in contests'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check if already voted in this contest
+        if Vote.objects.filter(user=request.user, contest=contest).exists():
+            return Response(
+                {'error': 'You have already voted in this contest'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create vote
+        vote = Vote.objects.create(
+            user=request.user,
+            contest=contest,
+            participant=participant
+        )
+
+        vote_serializer = VoteSerializer(vote, context={'request': request})
+        return Response(
+            {
+                'message': 'Vote cast successfully',
+                'vote': vote_serializer.data,
+                'participant_id': participant.id,
+                'contest_id': contest.id
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    @extend_schema(
+        summary="Get user's vote for a specific contest",
+        responses={200: VoteSerializer}
+    )
+    @decorators.action(detail=False, methods=['get'], url_path='my-vote/(?P<contest_id>[^/.]+)')
+    def my_vote(self, request, contest_id=None):
+        """
+        Get the user's vote for a specific contest.
+        """
+        try:
+            vote = Vote.objects.get(user=request.user, contest_id=contest_id)
+            serializer = VoteSerializer(vote, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Vote.DoesNotExist:
+            return Response(
+                {'voted': False, 'message': 'No vote cast yet'},
+                status=status.HTTP_404_NOT_FOUND
             )

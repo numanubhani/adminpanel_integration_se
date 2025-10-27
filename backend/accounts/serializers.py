@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote
 
 
 # ── Register (role-aware)
@@ -350,6 +350,33 @@ class AddFavoriteSerializer(serializers.Serializer):
         return value
 
 
+# ── Vote
+class VoteSerializer(serializers.ModelSerializer):
+    """
+    Serializer for votes.
+    """
+    participant_name = serializers.CharField(source='participant.contributor.screen_name', read_only=True)
+    contest_title = serializers.CharField(source='contest.title', read_only=True)
+    
+    class Meta:
+        model = Vote
+        fields = ['id', 'user', 'contest', 'contest_title', 'participant', 'participant_name', 'voted_at']
+        read_only_fields = ['id', 'user', 'voted_at']
+
+
+class CastVoteSerializer(serializers.Serializer):
+    """
+    Serializer for casting a vote.
+    """
+    participant_id = serializers.IntegerField()
+    
+    def validate_participant_id(self, value):
+        """Validate that the participant exists"""
+        if not ContestParticipant.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Participant does not exist")
+        return value
+
+
 # ══════════════════════════════════════════════════════════════════════
 # ADMIN SERIALIZERS
 # ══════════════════════════════════════════════════════════════════════
@@ -414,6 +441,7 @@ class ContestParticipantSerializer(serializers.ModelSerializer):
     contest_title = serializers.CharField(source='contest.title', read_only=True)
     body_part_image_id = serializers.IntegerField(source='body_part_image.id', read_only=True, allow_null=True)
     body_part_image_url = serializers.SerializerMethodField()
+    votes_count = serializers.SerializerMethodField()
     
     class Meta:
         model = ContestParticipant
@@ -421,9 +449,9 @@ class ContestParticipantSerializer(serializers.ModelSerializer):
             'id', 'contest', 'contest_title', 'contributor', 
             'contributor_name', 'contributor_email', 
             'body_part_image', 'body_part_image_id', 'body_part_image_url',
-            'joined_at', 'auto_entry'
+            'votes_count', 'joined_at', 'auto_entry'
         ]
-        read_only_fields = ['id', 'joined_at', 'body_part_image']
+        read_only_fields = ['id', 'joined_at', 'body_part_image', 'votes_count']
     
     def get_body_part_image_url(self, obj):
         """Return full URL for the body part image"""
@@ -433,6 +461,10 @@ class ContestParticipantSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.body_part_image.image.url)
             return obj.body_part_image.image.url
         return None
+    
+    def get_votes_count(self, obj):
+        """Return the total number of votes for this participant"""
+        return obj.votes.count()
 
 
 class ContestDetailSerializer(serializers.ModelSerializer):

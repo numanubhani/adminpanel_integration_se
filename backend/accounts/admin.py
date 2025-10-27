@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote
 
 
 @admin.register(Profile)
@@ -142,3 +142,27 @@ class FavoriteImageAdmin(admin.ModelAdmin):
         return obj.body_part_image.user.email
     get_contributor.short_description = "Contributor"
     get_contributor.admin_order_field = "body_part_image__user__email"
+
+
+@admin.register(Vote)
+class VoteAdmin(admin.ModelAdmin):
+    list_display = ('id', 'get_voter_email', 'get_contest_title', 'get_participant_name', 'voted_at')
+    list_filter = ('voted_at', 'contest')
+    search_fields = ('user__username', 'user__email', 'contest__title', 'participant__contributor__screen_name')
+    readonly_fields = ('voted_at',)
+    ordering = ('-voted_at',)
+    
+    def get_voter_email(self, obj):
+        return obj.user.email
+    get_voter_email.short_description = "Voter"
+    get_voter_email.admin_order_field = "user__email"
+    
+    def get_contest_title(self, obj):
+        return obj.contest.title
+    get_contest_title.short_description = "Contest"
+    get_contest_title.admin_order_field = "contest__title"
+    
+    def get_participant_name(self, obj):
+        return obj.participant.contributor.screen_name or obj.participant.contributor.user.email
+    get_participant_name.short_description = "Voted For"
+    get_participant_name.admin_order_field = "participant__contributor__screen_name"
