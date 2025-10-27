@@ -10,6 +10,7 @@ from .views import (
     SmokeSignalViewSet,
     FavoriteImageViewSet,
     VoteViewSet,
+    NotificationViewSet,
 )
 
 # Create router and register all ViewSets
@@ -32,6 +33,9 @@ router.register("favorites", FavoriteImageViewSet, basename="favorites")
 
 # Votes
 router.register("votes", VoteViewSet, basename="votes")
+
+# Notifications
+router.register("notifications", NotificationViewSet, basename="notifications")
 
 urlpatterns = [
     # Authentication endpoints (keeping old URLs)

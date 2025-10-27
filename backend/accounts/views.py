@@ -15,7 +15,7 @@ import os
 import traceback
 import json
 
-from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, Vote
+from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, Vote, Notification
 from .serializers import (
     RegisterSerializer,
     ProfileSerializer,
@@ -33,6 +33,7 @@ from .serializers import (
     AddFavoriteSerializer,
     VoteSerializer,
     CastVoteSerializer,
+    NotificationSerializer,
 )
 
 # Optional: Twilio for SMS sending
@@ -906,6 +907,9 @@ class ContestViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Create notifications for users who favorited this contributor's images
+            self._create_favorite_notifications(request.user, profile, contest)
+            
             serializer = ContestParticipantSerializer(participant, context={'request': request})
             return Response({
                 'message': 'Successfully joined the contest',
@@ -928,6 +932,32 @@ class ContestViewSet(viewsets.ModelViewSet):
                 {'error': f'An error occurred while joining the contest: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _create_favorite_notifications(self, contributor_user, contributor_profile, contest):
+        """
+        Create notifications for all users who have favorited this contributor's images.
+        """
+        try:
+            # Find all users who have favorited any image from this contributor
+            favorited_by_users = FavoriteImage.objects.filter(
+                body_part_image__user=contributor_user
+            ).values_list('user', flat=True).distinct()
+            
+            # Create notification for each user
+            contributor_name = contributor_profile.screen_name or contributor_user.username
+            
+            for user_id in favorited_by_users:
+                Notification.objects.create(
+                    user_id=user_id,
+                    notification_type='favorite_contest_join',
+                    title=f"{contributor_name} joined a contest!",
+                    message=f"Your favorited contributor {contributor_name} has joined '{contest.title}'. Check it out!",
+                    contest=contest,
+                    contributor=contributor_profile
+                )
+        except Exception as e:
+            # Don't fail the join if notifications fail
+            print(f"Error creating notifications: {str(e)}")
     
     def _check_eligibility(self, profile, contest):
         """
@@ -1437,3 +1467,83 @@ class VoteViewSet(viewsets.ModelViewSet):
                 {'voted': False, 'message': 'No vote cast yet'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# NOTIFICATION VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing user notifications.
+    Users can view their notifications and mark them as read.
+    """
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Return only the logged-in user's notifications"""
+        return Notification.objects.filter(user=self.request.user).select_related(
+            'contest', 'contributor', 'contributor__user'
+        )
+
+    @extend_schema(
+        summary="List all notifications for the current user",
+        description="Returns unread and read notifications.",
+        responses={200: NotificationSerializer(many=True)}
+    )
+    def list(self, request, *args, **kwargs):
+        """List all notifications for the current user"""
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(
+        summary="Get unread notifications count",
+        responses={200: {'type': 'object', 'properties': {'unread_count': {'type': 'integer'}}}}
+    )
+    @decorators.action(detail=False, methods=['get'], url_path='unread-count')
+    def unread_count(self, request):
+        """
+        Get the count of unread notifications.
+        """
+        count = Notification.objects.filter(user=request.user, is_read=False).count()
+        return Response({'unread_count': count}, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Mark a notification as read",
+        responses={200: NotificationSerializer}
+    )
+    @decorators.action(detail=True, methods=['post'], url_path='mark-read')
+    def mark_read(self, request, pk=None):
+        """
+        Mark a notification as read.
+        """
+        try:
+            notification = self.get_object()
+            notification.is_read = True
+            notification.save()
+            serializer = NotificationSerializer(notification, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Notification.DoesNotExist:
+            return Response(
+                {'error': 'Notification not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @extend_schema(
+        summary="Mark all notifications as read",
+        responses={200: {'type': 'object', 'properties': {'message': {'type': 'string'}}}}
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        """
+        Mark all user's notifications as read.
+        """
+        updated_count = Notification.objects.filter(
+            user=request.user, 
+            is_read=False
+        ).update(is_read=True)
+        
+        return Response(
+            {'message': f'Marked {updated_count} notifications as read'},
+            status=status.HTTP_200_OK
+        )

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote, Notification
 
 
 @admin.register(Profile)
@@ -166,3 +166,17 @@ class VoteAdmin(admin.ModelAdmin):
         return obj.participant.contributor.screen_name or obj.participant.contributor.user.email
     get_participant_name.short_description = "Voted For"
     get_participant_name.admin_order_field = "participant__contributor__screen_name"
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'get_user_email', 'notification_type', 'title', 'is_read', 'created_at')
+    list_filter = ('notification_type', 'is_read', 'created_at')
+    search_fields = ('user__username', 'user__email', 'title', 'message')
+    readonly_fields = ('created_at',)
+    ordering = ('-created_at',)
+    
+    def get_user_email(self, obj):
+        return obj.user.email
+    get_user_email.short_description = "User"
+    get_user_email.admin_order_field = "user__email"

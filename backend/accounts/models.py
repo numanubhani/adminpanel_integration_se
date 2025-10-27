@@ -259,3 +259,40 @@ class Vote(models.Model):
 
     def __str__(self):
         return f"{self.user.username} voted for {self.participant.contributor.screen_name} in {self.contest.title}"
+
+
+class Notification(models.Model):
+    """
+    Model for tracking notifications to users.
+    Notifies users when favorited contributors join contests.
+    """
+    NOTIFICATION_TYPES = (
+        ('favorite_contest_join', 'Favorited Contributor Joined Contest'),
+        ('contest_start', 'Contest Started'),
+        ('contest_end', 'Contest Ended'),
+        ('vote_received', 'Vote Received'),
+    )
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    notification_type = models.CharField(max_length=30, choices=NOTIFICATION_TYPES)
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    
+    # Related objects (optional, depending on notification type)
+    contest = models.ForeignKey(Contest, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
+    contributor = models.ForeignKey(Profile, on_delete=models.CASCADE, null=True, blank=True, related_name="related_notifications")
+    
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Notification"
+        verbose_name_plural = "Notifications"
+        indexes = [
+            models.Index(fields=['user', 'is_read']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.title}"

@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote, Notification
 
 
 # ── Register (role-aware)
@@ -375,6 +375,32 @@ class CastVoteSerializer(serializers.Serializer):
         if not ContestParticipant.objects.filter(id=value).exists():
             raise serializers.ValidationError("Participant does not exist")
         return value
+
+
+# ── Notification
+class NotificationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for notifications.
+    """
+    contest_title = serializers.CharField(source='contest.title', read_only=True, allow_null=True)
+    contest_id = serializers.IntegerField(source='contest.id', read_only=True, allow_null=True)
+    contributor_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Notification
+        fields = [
+            'id', 'notification_type', 'title', 'message', 
+            'contest', 'contest_id', 'contest_title',
+            'contributor', 'contributor_name',
+            'is_read', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+    
+    def get_contributor_name(self, obj):
+        """Return contributor's screen name if available"""
+        if obj.contributor:
+            return obj.contributor.screen_name or obj.contributor.user.username
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════
