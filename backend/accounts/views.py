@@ -389,9 +389,11 @@ class ProfileViewSet(viewsets.ModelViewSet):
     
     @decorators.action(detail=False, methods=['get'], url_path='contributors/list')
     def contributors_list(self, request):
-        """Get all contributors with their complete profile data"""
+        """Get all contributors with their complete profile data including body part images"""
         try:
-            # Get all contributors
+            from django.db.models import Count, Q
+            
+            # Get all contributors with related data
             contributors = Profile.objects.filter(role='contributor').select_related('user')
             
             # Transform to frontend format
@@ -403,8 +405,41 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 shoe_size = parse_numeric_value(profile.shoe_size)
                 penis_inches = parse_numeric_value(profile.penis_length)
                 
+                # Get body part images grouped by category
+                body_part_images = BodyPartImage.objects.filter(user=profile.user)
+                
+                # Group images by body part category
+                photo_galleries = {}
+                for img in body_part_images:
+                    category = img.body_part
+                    if category not in photo_galleries:
+                        photo_galleries[category] = []
+                    
+                    photo_galleries[category].append({
+                        'id': img.id,
+                        'image_url': request.build_absolute_uri(img.image.url) if img.image else None,
+                        'created_at': img.created_at.isoformat() if img.created_at else None
+                    })
+                
+                # Calculate contest statistics
+                total_contests = ContestParticipant.objects.filter(contributor=profile).count()
+                
+                # Count contests won (1st place) - you may need to adjust this based on your voting system
+                # For now, we'll use a placeholder
+                contests_won = 0  # TODO: Calculate based on vote counts/rankings
+                
+                # Get profile picture URL
+                profile_pic_url = None
+                if profile.profile_picture:
+                    profile_pic_url = request.build_absolute_uri(profile.profile_picture.url)
+                
+                # Count total images
+                total_images = body_part_images.count()
+                filled_categories = len(photo_galleries.keys())
+                
                 contributor_dict = {
                     'id': profile.id,
+                    'screen_name': profile.screen_name or profile.user.email,
                     'name': profile.screen_name or profile.user.email,
                     'email': profile.user.email,
                     'gender': profile.gender or 'Unknown',
@@ -412,6 +447,8 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     'skinTone': profile.skin_tone or '',
                     'hairColor': profile.hair_color or '',
                     'bodyType': profile.body_type or profile.female_body_type or '',
+                    'profile_picture': profile_pic_url,
+                    'profilePicture': profile_pic_url,
                     # Numeric values for calculations (frontend expects these)
                     'heightIn': height_inches,
                     'weightLbs': weight_lbs,
@@ -420,15 +457,28 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     # String values for display
                     'height': profile.height or '',
                     'weight': profile.weight or '',
+                    'bustSize': profile.bust_size or '',
+                    'bust_size': profile.bust_size or '',
                     'cupSize': profile.bust_size or '',
+                    'penisSize': profile.penis_length or '',
                     'penisLength': profile.penis_length or '',
+                    'penis_size': profile.penis_length or '',
+                    'shoe_size': profile.shoe_size or '',
                     'bio': profile.bio or '',
-                    'photoGallery': [],  # Would come from BodyPartImage model
+                    'photoGalleries': f"{filled_categories} of 7",  # 7 total categories
+                    'photo_galleries': f"{filled_categories} of 7",
+                    'photoGallery': photo_galleries,  # Object with categories as keys
                     'created_at': profile.user.date_joined.isoformat() if profile.user.date_joined else None,
-                    # Placeholder for contest/earnings data - would come from contest participation
-                    'earnings': 0,
-                    'contestsWon': 0,
-                    'engagement': 0,
+                    # Contest/earnings data
+                    'contests': total_contests,
+                    'contestsCount': total_contests,
+                    'contests_count': total_contests,
+                    'contestsWon': contests_won,
+                    'badges': contests_won,  # Assuming badges = wins for now
+                    'badgesCount': contests_won,
+                    'badges_count': contests_won,
+                    'earnings': 0,  # TODO: Calculate from contest prizes
+                    'engagement': 0,  # TODO: Calculate based on views/favorites
                 }
                 contributors_data.append(contributor_dict)
             
@@ -874,21 +924,43 @@ class ContestViewSet(viewsets.ModelViewSet):
             #         status=status.HTTP_400_BAD_REQUEST
             #     )
             
-            # Find matching body part image for this contest category
-            matching_image = BodyPartImage.objects.filter(
-                user=request.user,
-                body_part=contest.category
-            ).first()
+            # Get body_part_image_id from request if provided
+            body_part_image_id = request.data.get('body_part_image_id', None)
             
-            if not matching_image:
-                # If no exact match, try to find any image from this user
-                matching_image = BodyPartImage.objects.filter(user=request.user).first()
-            
-            if not matching_image:
-                return Response(
-                    {'error': f'You need to upload a "{contest.category}" image before joining this contest'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            if body_part_image_id:
+                # User selected a specific image
+                try:
+                    matching_image = BodyPartImage.objects.get(
+                        id=body_part_image_id,
+                        user=request.user
+                    )
+                    # Verify the image matches the contest category
+                    if matching_image.body_part.lower() != contest.category.lower():
+                        return Response(
+                            {'error': f'Selected image does not match contest category "{contest.category}"'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except BodyPartImage.DoesNotExist:
+                    return Response(
+                        {'error': 'Selected image not found or does not belong to you'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                # Auto-select: Find matching body part image for this contest category
+                matching_image = BodyPartImage.objects.filter(
+                    user=request.user,
+                    body_part=contest.category
+                ).first()
+                
+                if not matching_image:
+                    # If no exact match, try to find any image from this user
+                    matching_image = BodyPartImage.objects.filter(user=request.user).first()
+                
+                if not matching_image:
+                    return Response(
+                        {'error': f'You need to upload a "{contest.category}" image before joining this contest'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
             # Try to create participant entry using get_or_create to prevent duplicates
             participant, created = ContestParticipant.objects.get_or_create(

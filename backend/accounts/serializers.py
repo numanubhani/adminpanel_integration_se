@@ -288,9 +288,20 @@ class AddFundsSerializer(serializers.ModelSerializer):
 
 # ── Body Part Image
 class BodyPartImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = BodyPartImage
-        fields = ["id", "body_part", "image", "created_at"]
+        fields = ["id", "body_part", "image", "image_url", "created_at"]
+    
+    def get_image_url(self, obj):
+        """Return full URL for the image"""
+        if obj.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
+        return None
 
 
 # ── Favorite Image
@@ -303,6 +314,7 @@ class FavoriteImageSerializer(serializers.ModelSerializer):
     body_part = serializers.CharField(source='body_part_image.body_part', read_only=True)
     contributor_name = serializers.CharField(source='body_part_image.user.username', read_only=True)
     contributor_screen_name = serializers.SerializerMethodField()
+    contributor_id = serializers.SerializerMethodField()
     body_part_image_id = serializers.IntegerField(source='body_part_image.id', read_only=True)
     
     class Meta:
@@ -314,6 +326,7 @@ class FavoriteImageSerializer(serializers.ModelSerializer):
             'image_url', 
             'contributor_name', 
             'contributor_screen_name',
+            'contributor_id',
             'created_at'
         ]
         read_only_fields = ['id', 'created_at']
@@ -334,6 +347,14 @@ class FavoriteImageSerializer(serializers.ModelSerializer):
             return profile.screen_name if profile.screen_name else obj.body_part_image.user.username
         except:
             return obj.body_part_image.user.username
+    
+    def get_contributor_id(self, obj):
+        """Return contributor's profile ID"""
+        try:
+            profile = obj.body_part_image.user.profile
+            return profile.id
+        except:
+            return None
 
 
 class AddFavoriteSerializer(serializers.Serializer):
