@@ -171,6 +171,7 @@ class ContestParticipant(models.Model):
     """
     contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name="participants")
     contributor = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="contest_entries")
+    body_part_image = models.ForeignKey(BodyPartImage, on_delete=models.SET_NULL, null=True, blank=True, related_name="contest_submissions")
     joined_at = models.DateTimeField(auto_now_add=True)
     auto_entry = models.BooleanField(default=False)  # Whether they were auto-entered
     
@@ -216,3 +217,22 @@ class SmokeSignal(models.Model):
 
     def __str__(self):
         return f'{self.channel} | {self.status} | {self.sender} → {self.recipient} | {self.message}'
+
+
+class FavoriteImage(models.Model):
+    """
+    Model for tracking favorite images.
+    Users can favorite contributor images to view them later in their dashboard.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="favorite_images")
+    body_part_image = models.ForeignKey(BodyPartImage, on_delete=models.CASCADE, related_name="favorited_by")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'body_part_image')
+        ordering = ['-created_at']
+        verbose_name = "Favorite Image"
+        verbose_name_plural = "Favorite Images"
+
+    def __str__(self):
+        return f"{self.user.username} favorited {self.body_part_image.body_part} by {self.body_part_image.user.username}"

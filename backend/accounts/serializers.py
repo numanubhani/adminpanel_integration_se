@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage
 
 
 # ── Register (role-aware)
@@ -293,6 +293,63 @@ class BodyPartImageSerializer(serializers.ModelSerializer):
         fields = ["id", "body_part", "image", "created_at"]
 
 
+# ── Favorite Image
+class FavoriteImageSerializer(serializers.ModelSerializer):
+    """
+    Serializer for favorite images.
+    Returns the favorited image details along with contributor information.
+    """
+    image_url = serializers.SerializerMethodField()
+    body_part = serializers.CharField(source='body_part_image.body_part', read_only=True)
+    contributor_name = serializers.CharField(source='body_part_image.user.username', read_only=True)
+    contributor_screen_name = serializers.SerializerMethodField()
+    body_part_image_id = serializers.IntegerField(source='body_part_image.id', read_only=True)
+    
+    class Meta:
+        model = FavoriteImage
+        fields = [
+            'id', 
+            'body_part_image_id',
+            'body_part', 
+            'image_url', 
+            'contributor_name', 
+            'contributor_screen_name',
+            'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+    
+    def get_image_url(self, obj):
+        """Return full URL for the favorited image"""
+        if obj.body_part_image.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.body_part_image.image.url)
+            return obj.body_part_image.image.url
+        return None
+    
+    def get_contributor_screen_name(self, obj):
+        """Return contributor's screen name if available"""
+        try:
+            profile = obj.body_part_image.user.profile
+            return profile.screen_name if profile.screen_name else obj.body_part_image.user.username
+        except:
+            return obj.body_part_image.user.username
+
+
+class AddFavoriteSerializer(serializers.Serializer):
+    """
+    Serializer for adding an image to favorites.
+    Only requires the body_part_image_id.
+    """
+    body_part_image_id = serializers.IntegerField()
+    
+    def validate_body_part_image_id(self, value):
+        """Validate that the body part image exists"""
+        if not BodyPartImage.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Body part image does not exist")
+        return value
+
+
 # ══════════════════════════════════════════════════════════════════════
 # ADMIN SERIALIZERS
 # ══════════════════════════════════════════════════════════════════════
@@ -355,15 +412,27 @@ class ContestParticipantSerializer(serializers.ModelSerializer):
     contributor_name = serializers.CharField(source='contributor.screen_name', read_only=True)
     contributor_email = serializers.EmailField(source='contributor.user.email', read_only=True)
     contest_title = serializers.CharField(source='contest.title', read_only=True)
+    body_part_image_id = serializers.IntegerField(source='body_part_image.id', read_only=True, allow_null=True)
+    body_part_image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = ContestParticipant
         fields = [
             'id', 'contest', 'contest_title', 'contributor', 
             'contributor_name', 'contributor_email', 
+            'body_part_image', 'body_part_image_id', 'body_part_image_url',
             'joined_at', 'auto_entry'
         ]
-        read_only_fields = ['id', 'joined_at']
+        read_only_fields = ['id', 'joined_at', 'body_part_image']
+    
+    def get_body_part_image_url(self, obj):
+        """Return full URL for the body part image"""
+        if obj.body_part_image and obj.body_part_image.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.body_part_image.image.url)
+            return obj.body_part_image.image.url
+        return None
 
 
 class ContestDetailSerializer(serializers.ModelSerializer):

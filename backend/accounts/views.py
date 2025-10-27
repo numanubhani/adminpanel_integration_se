@@ -15,7 +15,7 @@ import os
 import traceback
 import json
 
-from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal
+from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage
 from .serializers import (
     RegisterSerializer,
     ProfileSerializer,
@@ -29,6 +29,8 @@ from .serializers import (
     SmokeSignalSerializer,
     DashboardStatsSerializer,
     BodyPartImageSerializer,
+    FavoriteImageSerializer,
+    AddFavoriteSerializer,
 )
 
 # Optional: Twilio for SMS sending
@@ -869,11 +871,30 @@ class ContestViewSet(viewsets.ModelViewSet):
             #         status=status.HTTP_400_BAD_REQUEST
             #     )
             
+            # Find matching body part image for this contest category
+            matching_image = BodyPartImage.objects.filter(
+                user=request.user,
+                body_part=contest.category
+            ).first()
+            
+            if not matching_image:
+                # If no exact match, try to find any image from this user
+                matching_image = BodyPartImage.objects.filter(user=request.user).first()
+            
+            if not matching_image:
+                return Response(
+                    {'error': f'You need to upload a "{contest.category}" image before joining this contest'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
             # Try to create participant entry using get_or_create to prevent duplicates
             participant, created = ContestParticipant.objects.get_or_create(
                 contest=contest,
                 contributor=profile,
-                defaults={'auto_entry': False}
+                defaults={
+                    'auto_entry': False,
+                    'body_part_image': matching_image
+                }
             )
             
             if not created:
@@ -883,12 +904,15 @@ class ContestViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            serializer = ContestParticipantSerializer(participant, context={'request': request})
             return Response({
                 'message': 'Successfully joined the contest',
                 'contest_id': contest.id,
                 'contest_name': contest.title,
+                'body_part_image_id': matching_image.id,
+                'body_part_image_url': request.build_absolute_uri(matching_image.image.url) if matching_image.image else None,
                 'joined_at': participant.joined_at,
-                'participant': ContestParticipantSerializer(participant).data
+                'participant': serializer.data
             }, status=status.HTTP_201_CREATED)
         
         except Exception as e:
@@ -1151,3 +1175,155 @@ class SmokeSignalViewSet(viewsets.ModelViewSet):
 
         serializer = SmokeSignalSerializer(record)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# FAVORITE IMAGE VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class FavoriteImageViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing favorite images.
+    Users can add, remove, and list their favorite contributor images.
+    """
+    serializer_class = FavoriteImageSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Return only the logged-in user's favorite images"""
+        return FavoriteImage.objects.filter(user=self.request.user).select_related(
+            'body_part_image', 'body_part_image__user', 'body_part_image__user__profile'
+        )
+
+    @extend_schema(
+        summary="List all favorite images for the current user",
+        description="Returns a list of all images the user has favorited, with contributor details.",
+        responses={200: FavoriteImageSerializer(many=True)}
+    )
+    def list(self, request, *args, **kwargs):
+        """List all favorite images for the current user"""
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(
+        summary="Add an image to favorites",
+        request=AddFavoriteSerializer,
+        responses={
+            201: FavoriteImageSerializer,
+            400: OpenApiResponse(description="Image already favorited or invalid image ID"),
+        }
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='add')
+    def add_favorite(self, request):
+        """
+        Add an image to favorites.
+        Requires: body_part_image_id
+        """
+        serializer = AddFavoriteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        body_part_image_id = serializer.validated_data['body_part_image_id']
+        
+        try:
+            body_part_image = BodyPartImage.objects.get(id=body_part_image_id)
+        except BodyPartImage.DoesNotExist:
+            return Response(
+                {'error': 'Body part image not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if already favorited
+        if FavoriteImage.objects.filter(user=request.user, body_part_image=body_part_image).exists():
+            return Response(
+                {'error': 'Image already in favorites'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create favorite
+        favorite = FavoriteImage.objects.create(
+            user=request.user,
+            body_part_image=body_part_image
+        )
+
+        serializer = FavoriteImageSerializer(favorite, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Remove an image from favorites",
+        responses={
+            204: OpenApiResponse(description="Image removed from favorites"),
+            404: OpenApiResponse(description="Favorite not found"),
+        }
+    )
+    @decorators.action(detail=False, methods=['delete'], url_path='remove/(?P<body_part_image_id>[^/.]+)')
+    def remove_favorite(self, request, body_part_image_id=None):
+        """
+        Remove an image from favorites by body_part_image_id.
+        """
+        try:
+            favorite = FavoriteImage.objects.get(
+                user=request.user,
+                body_part_image_id=body_part_image_id
+            )
+            favorite.delete()
+            return Response(
+                {'message': 'Image removed from favorites'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        except FavoriteImage.DoesNotExist:
+            return Response(
+                {'error': 'Favorite not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @extend_schema(
+        summary="Toggle favorite status for an image",
+        request=AddFavoriteSerializer,
+        responses={
+            200: OpenApiResponse(description="Image added to or removed from favorites"),
+        }
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='toggle')
+    def toggle_favorite(self, request):
+        """
+        Toggle favorite status for an image.
+        If favorited, removes it. If not favorited, adds it.
+        """
+        serializer = AddFavoriteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        body_part_image_id = serializer.validated_data['body_part_image_id']
+        
+        try:
+            body_part_image = BodyPartImage.objects.get(id=body_part_image_id)
+        except BodyPartImage.DoesNotExist:
+            return Response(
+                {'error': 'Body part image not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Try to find existing favorite
+        favorite = FavoriteImage.objects.filter(
+            user=request.user,
+            body_part_image=body_part_image
+        ).first()
+
+        if favorite:
+            # Remove from favorites
+            favorite.delete()
+            return Response(
+                {'message': 'Image removed from favorites', 'is_favorite': False},
+                status=status.HTTP_200_OK
+            )
+        else:
+            # Add to favorites
+            favorite = FavoriteImage.objects.create(
+                user=request.user,
+                body_part_image=body_part_image
+            )
+            serializer = FavoriteImageSerializer(favorite, context={'request': request})
+            return Response(
+                {'message': 'Image added to favorites', 'is_favorite': True, 'favorite': serializer.data},
+                status=status.HTTP_200_OK
+            )

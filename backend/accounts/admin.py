@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage
 
 
 @admin.register(Profile)
@@ -118,3 +118,27 @@ class SmokeSignalAdmin(admin.ModelAdmin):
     search_fields = ('sender', 'recipient', 'message')
     readonly_fields = ('timestamp',)
     ordering = ('-timestamp',)
+
+
+@admin.register(FavoriteImage)
+class FavoriteImageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'get_user_email', 'get_body_part', 'get_contributor', 'created_at')
+    list_filter = ('created_at', 'body_part_image__body_part')
+    search_fields = ('user__username', 'user__email', 'body_part_image__user__email', 'body_part_image__body_part')
+    readonly_fields = ('created_at',)
+    ordering = ('-created_at',)
+    
+    def get_user_email(self, obj):
+        return obj.user.email
+    get_user_email.short_description = "User"
+    get_user_email.admin_order_field = "user__email"
+    
+    def get_body_part(self, obj):
+        return obj.body_part_image.body_part
+    get_body_part.short_description = "Body Part"
+    get_body_part.admin_order_field = "body_part_image__body_part"
+    
+    def get_contributor(self, obj):
+        return obj.body_part_image.user.email
+    get_contributor.short_description = "Contributor"
+    get_contributor.admin_order_field = "body_part_image__user__email"
