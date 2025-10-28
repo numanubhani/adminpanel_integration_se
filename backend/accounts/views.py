@@ -1445,6 +1445,15 @@ class VoteViewSet(viewsets.ModelViewSet):
     serializer_class = VoteSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        """
+        Override permissions for specific actions
+        """
+        if self.action in ['record_match_result', 'participants_sequence']:
+            # Allow unauthenticated access for match result recording
+            return [AllowAny()]
+        return super().get_permissions()
+
     def get_queryset(self):
         """Return votes filtered by contest if specified"""
         queryset = Vote.objects.all().select_related('user', 'contest', 'participant')
@@ -1454,7 +1463,7 @@ class VoteViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(contest_id=contest_id)
         
         # Users can only see their own votes
-        if self.request.user.profile.role == 'user':
+        if self.request.user.is_authenticated and hasattr(self.request.user, 'profile') and self.request.user.profile.role == 'user':
             queryset = queryset.filter(user=self.request.user)
         
         return queryset
@@ -1539,6 +1548,225 @@ class VoteViewSet(viewsets.ModelViewSet):
                 {'voted': False, 'message': 'No vote cast yet'},
                 status=status.HTTP_404_NOT_FOUND
             )
+    
+    @extend_schema(
+        summary="Record match result (winner of a round)",
+        request={'application/json': {
+            'type': 'object',
+            'properties': {
+                'winner_id': {'type': 'integer'},
+                'loser_id': {'type': 'integer'},
+                'vote_count_winner': {'type': 'integer'},
+                'vote_count_loser': {'type': 'integer'}
+            }
+        }},
+        responses={200: {}}
+    )
+    @decorators.action(detail=False, methods=['post'])
+    def record_match_result(self, request):
+        """
+        Record the result of a 30-second match/round.
+        Stores winner and updates consecutive wins counter.
+        """
+        winner_id = request.data.get('winner_id')
+        loser_id = request.data.get('loser_id')
+        vote_count_winner = request.data.get('vote_count_winner', 0)
+        vote_count_loser = request.data.get('vote_count_loser', 0)
+        
+        if not winner_id or not loser_id:
+            return Response(
+                {'error': 'winner_id and loser_id are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            winner = ContestParticipant.objects.get(id=winner_id)
+            loser = ContestParticipant.objects.get(id=loser_id)
+            
+            if winner.contest_id != loser.contest_id:
+                return Response(
+                    {'error': 'Participants must be from the same contest'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            contest = winner.contest
+            
+            # Get the last vote for this winner to check consecutive wins
+            last_vote = Vote.objects.filter(
+                contest=contest,
+                participant=winner
+            ).order_by('-voted_at').first()
+            
+            consecutive_wins = 1
+            if last_vote:
+                consecutive_wins = last_vote.consecutive_wins + 1
+            
+            # Create a vote record for this match result
+            # For match results, we'll use the authenticated user or skip user requirement
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            
+            # Try to get any valid user for system voting
+            if request.user.is_authenticated:
+                system_user = request.user
+            else:
+                # Get any admin or first user as system user
+                system_user = User.objects.filter(is_staff=True).first() or User.objects.first()
+                
+                if not system_user:
+                    return Response(
+                        {'error': 'No user available to record vote'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+            
+            try:
+                vote = Vote.objects.create(
+                    user=system_user,
+                    contest=contest,
+                    participant=winner,
+                    consecutive_wins=consecutive_wins
+                )
+            except Exception as vote_error:
+                return Response(
+                    {'error': f'Failed to create vote record: {str(vote_error)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Check if reset is needed (10 consecutive wins)
+            reset_matchup = consecutive_wins >= 10
+            
+            return Response({
+                'message': 'Match result recorded successfully',
+                'winner_id': winner.id,
+                'loser_id': loser.id,
+                'consecutive_wins': consecutive_wins,
+                'reset_matchup': reset_matchup,
+                'vote_count_winner': vote_count_winner,
+                'vote_count_loser': vote_count_loser
+            }, status=status.HTTP_200_OK)
+            
+        except ContestParticipant.DoesNotExist:
+            return Response(
+                {'error': 'Participant not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Internal error: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Get participants for sequential voting",
+        responses={200: {}}
+    )
+    @decorators.action(detail=False, methods=['get'])
+    def participants_sequence(self, request):
+        """
+        Get all participants for a contest in the order they joined.
+        Used for sequential voting system.
+        """
+        contest_id = request.query_params.get('contest_id')
+        
+        if not contest_id:
+            return Response(
+                {'error': 'contest_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            contest = Contest.objects.get(id=contest_id)
+        except Contest.DoesNotExist:
+            return Response(
+                {'error': 'Contest not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get all participants ordered by joined_at (ascending - first to join at the top)
+        participants = ContestParticipant.objects.filter(
+            contest=contest
+        ).select_related('contributor', 'body_part_image', 'body_part_image__user').order_by('joined_at')
+        
+        participants_data = []
+        for participant in participants:
+            participants_data.append({
+                'id': participant.id,
+                'contributor_name': participant.contributor.screen_name or participant.contributor.user.username,
+                'contributor_id': participant.contributor.id,
+                'image_url': request.build_absolute_uri(participant.body_part_image.image.url) if participant.body_part_image and participant.body_part_image.image else None,
+                'votes_count': participant.votes.count(),
+                'joined_at': participant.joined_at.isoformat()
+            })
+        
+        return Response({
+            'contest_id': contest.id,
+            'total_participants': participants.count(),
+            'participants': participants_data
+        }, status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        summary="Get contest results with rankings",
+        responses={200: {}}
+    )
+    @decorators.action(detail=False, methods=['get'])
+    def contest_results(self, request):
+        """
+        Get final results for a contest showing rankings based on votes.
+        Returns participants ranked by total votes received.
+        """
+        contest_id = request.query_params.get('contest_id')
+        
+        if not contest_id:
+            return Response(
+                {'error': 'contest_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            contest = Contest.objects.get(id=contest_id)
+        except Contest.DoesNotExist:
+            return Response(
+                {'error': 'Contest not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get all participants with their vote counts
+        from django.db.models import Count, Sum
+        participants = ContestParticipant.objects.filter(
+            contest=contest
+        ).select_related('contributor', 'body_part_image').annotate(
+            total_votes=Count('votes')
+        ).order_by('-total_votes', 'joined_at')
+        
+        results_data = []
+        for idx, participant in enumerate(participants, start=1):
+            # Get all voters for this participant
+            votes = Vote.objects.filter(
+                contest=contest,
+                participant=participant
+            ).select_related('user')
+            
+            voter_names = [vote.user.username for vote in votes]
+            
+            results_data.append({
+                'place': idx,
+                'participant_id': participant.id,
+                'screen_name': participant.contributor.screen_name or participant.contributor.user.username,
+                'contributor_id': participant.contributor.id,
+                'image_url': request.build_absolute_uri(participant.body_part_image.image.url) if participant.body_part_image and participant.body_part_image.image else None,
+                'total_votes': participant.total_votes,
+                'voters': voter_names,
+                'joined_at': participant.joined_at.isoformat()
+            })
+        
+        return Response({
+            'contest_id': contest.id,
+            'contest_title': contest.title,
+            'contest_category': contest.category,
+            'contest_end_time': contest.end_time.isoformat() if contest.end_time else None,
+            'total_participants': participants.count(),
+            'results': results_data
+        }, status=status.HTTP_200_OK)
 
 
 # ══════════════════════════════════════════════════════════════════════

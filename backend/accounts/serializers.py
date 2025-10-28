@@ -452,18 +452,23 @@ class ContestSerializer(serializers.ModelSerializer):
     """
     created_by_name = serializers.CharField(source='created_by.profile.screen_name', read_only=True)
     joined = serializers.SerializerMethodField()
+    participants_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Contest
         fields = [
             'id', 'title', 'category', 'image', 'attributes', 
-            'joined', 'max_participants', 'start_time', 'end_time', 
+            'joined', 'participants_count', 'max_participants', 'start_time', 'end_time', 
             'recurring', 'cost', 'is_active', 
             'created_by', 'created_by_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
     
     def get_joined(self, obj):
+        """Count how many contributors have joined this contest"""
+        return obj.participants.count()
+    
+    def get_participants_count(self, obj):
         """Count how many contributors have joined this contest"""
         return obj.participants.count()
     

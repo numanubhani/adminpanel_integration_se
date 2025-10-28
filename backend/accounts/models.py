@@ -247,9 +247,9 @@ class Vote(models.Model):
     contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name="votes")
     participant = models.ForeignKey(ContestParticipant, on_delete=models.CASCADE, related_name="votes")
     voted_at = models.DateTimeField(auto_now_add=True)
+    consecutive_wins = models.IntegerField(default=0)  # Track consecutive wins for a participant
 
     class Meta:
-        unique_together = ('user', 'contest')
         ordering = ['-voted_at']
         verbose_name = "Vote"
         verbose_name_plural = "Votes"
