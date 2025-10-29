@@ -782,6 +782,103 @@ class DashboardViewSet(viewsets.GenericViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @decorators.action(detail=False, methods=['get'], url_path='top-contributors')
+    def top_contributors(self, request):
+        """Get top contributors with their statistics"""
+        try:
+            # Get all contributors with their stats
+            contributors = Profile.objects.filter(role='contributor').select_related('user')
+            
+            top_contributors_data = []
+            
+            for profile in contributors:
+                # Get contests joined count
+                contests_joined = ContestParticipant.objects.filter(
+                    contributor=profile
+                ).count()
+                
+                # Get total votes (upvotes) received across all contests
+                total_votes = Vote.objects.filter(
+                    participant__contributor=profile
+                ).count()
+                
+                # Get contests won (1st place finishes)
+                # For now, we count how many contests they participated in where they had the most votes
+                participant_records = ContestParticipant.objects.filter(
+                    contributor=profile
+                ).annotate(
+                    vote_count=Count('votes')
+                )
+                
+                contests_won = 0
+                top3_finishes = 0
+                top10_finishes = 0
+                
+                for participant in participant_records:
+                    contest = participant.contest
+                    # Get all participants in this contest ordered by votes
+                    all_participants = ContestParticipant.objects.filter(
+                        contest=contest
+                    ).annotate(
+                        vote_count=Count('votes')
+                    ).order_by('-vote_count', 'joined_at')
+                    
+                    # Find position
+                    position = 1
+                    for idx, p in enumerate(all_participants, start=1):
+                        if p.id == participant.id:
+                            position = idx
+                            break
+                    
+                    if position == 1:
+                        contests_won += 1
+                    if position <= 3:
+                        top3_finishes += 1
+                    if position <= 10:
+                        top10_finishes += 1
+                
+                # Get unique body parts (galleries completed)
+                unique_body_parts = BodyPartImage.objects.filter(
+                    user=profile.user
+                ).values('body_part').distinct().count()
+                
+                # Total galleries available (you can adjust this)
+                total_galleries = 8
+                galleries_completed = f"{unique_body_parts} of {total_galleries}"
+                
+                # Get profile picture or ID document for avatar
+                avatar_url = None
+                if profile.profile_picture:
+                    avatar_url = request.build_absolute_uri(profile.profile_picture.url)
+                elif profile.id_document:
+                    avatar_url = request.build_absolute_uri(profile.id_document.url)
+                
+                top_contributors_data.append({
+                    'id': profile.id,
+                    'name': profile.screen_name or profile.legal_full_name or profile.user.username,
+                    'avatar': avatar_url,
+                    'contests_joined': contests_joined,
+                    'votes': total_votes,
+                    'contests_win': contests_won,
+                    'galleries_completed': galleries_completed,
+                    'top3Finishes': top3_finishes,
+                    'top10Finishes': top10_finishes,
+                })
+            
+            # Sort by total votes (descending)
+            top_contributors_data.sort(key=lambda x: x['votes'], reverse=True)
+            
+            # Return top 20 contributors
+            return Response(top_contributors_data[:20], status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1693,6 +1790,7 @@ class VoteViewSet(viewsets.ModelViewSet):
                 'id': participant.id,
                 'contributor_name': participant.contributor.screen_name or participant.contributor.user.username,
                 'contributor_id': participant.contributor.id,
+                'body_part_image_id': participant.body_part_image.id if participant.body_part_image else None,
                 'image_url': request.build_absolute_uri(participant.body_part_image.image.url) if participant.body_part_image and participant.body_part_image.image else None,
                 'votes_count': participant.votes.count(),
                 'joined_at': participant.joined_at.isoformat()
