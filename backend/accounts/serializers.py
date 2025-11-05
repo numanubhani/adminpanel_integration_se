@@ -8,7 +8,7 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=("contributor", "user"))
-    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True)
+    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=17)
 
     def validate_email(self, value):
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
@@ -30,9 +30,10 @@ class RegisterSerializer(serializers.Serializer):
 class ProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", required=False)
     username = serializers.CharField(source="user.username", read_only=True)
-    screen_name = serializers.CharField(required=False)
+    screen_name = serializers.CharField(required=False, max_length=17)
     password = serializers.CharField(write_only=True, required=False)
     profile_picture = serializers.SerializerMethodField()
+    active_profile_image_id = serializers.IntegerField(source="active_profile_image.id", read_only=True, allow_null=True)
     card_number = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
@@ -68,6 +69,37 @@ class ProfileSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and 'profile_picture' in request.FILES:
             instance.profile_picture = request.FILES['profile_picture']
+        
+        # Handle setting profile picture from existing gallery image
+        if request and 'profile_picture_from_gallery' in request.data:
+            from .models import BodyPartImage
+            from django.core.files.base import ContentFile
+            import os
+            
+            try:
+                body_part_image_id = int(request.data.get('profile_picture_from_gallery'))
+                body_part_image = BodyPartImage.objects.get(
+                    id=body_part_image_id,
+                    user=request.user
+                )
+                
+                # Track which gallery image is the active profile picture
+                instance.active_profile_image = body_part_image
+                
+                # Copy the image file to profile_picture
+                if body_part_image.image:
+                    # Read the image content
+                    image_content = body_part_image.image.read()
+                    # Get original filename
+                    original_filename = os.path.basename(body_part_image.image.name)
+                    # Save to profile_picture field
+                    instance.profile_picture.save(
+                        original_filename,
+                        ContentFile(image_content),
+                        save=False
+                    )
+            except (BodyPartImage.DoesNotExist, ValueError):
+                pass  # Silently fail if image not found
 
         # profile fields (incl. id_document via multipart)
         for attr, value in validated_data.items():
@@ -81,7 +113,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 class UserRegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True)
+    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=17)
 
     def validate_email(self, value):
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
@@ -103,7 +135,7 @@ class ContributorRegisterSerializer(serializers.Serializer):
     # Core account
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True)
+    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=17)
     legalFullName = serializers.CharField(source="legal_full_name", required=False, allow_blank=True)
     allowNameInSearch = serializers.BooleanField(source="allow_name_in_search", required=False)
     creatorPathway = serializers.CharField(source="creator_pathway", required=False, allow_blank=True)
@@ -453,13 +485,14 @@ class ContestSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source='created_by.profile.screen_name', read_only=True)
     joined = serializers.SerializerMethodField()
     participants_count = serializers.SerializerMethodField()
+    estimated_prize = serializers.SerializerMethodField()
     
     class Meta:
         model = Contest
         fields = [
             'id', 'title', 'category', 'image', 'attributes', 
             'joined', 'participants_count', 'max_participants', 'start_time', 'end_time', 
-            'recurring', 'cost', 'is_active', 
+            'recurring', 'cost', 'estimated_prize', 'is_active', 
             'created_by', 'created_by_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
@@ -471,6 +504,26 @@ class ContestSerializer(serializers.ModelSerializer):
     def get_participants_count(self, obj):
         """Count how many contributors have joined this contest"""
         return obj.participants.count()
+    
+    def get_estimated_prize(self, obj):
+        """
+        Calculate estimated prize as 75% of total user entry fees.
+        Formula: (number_of_user_participants * cost_per_entry) * 0.75
+        
+        Note: Only counts users (not contributors) who paid to join.
+        Contributors join for free and compete for the prize.
+        """
+        # For now, assume all participants are paying users
+        # In a real system, you'd count only users who paid
+        total_participants = obj.participants.count()
+        
+        # Calculate total pot (participants * cost per entry)
+        total_pot = float(total_participants) * float(obj.cost)
+        
+        # Prize is 75% of total pot
+        estimated_prize = total_pot * 0.75
+        
+        return round(estimated_prize, 2)
     
     def validate(self, data):
         """Validate that end_time is after start_time"""
@@ -527,13 +580,15 @@ class ContestDetailSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source='created_by.profile.screen_name', read_only=True)
     participants_list = ContestParticipantSerializer(source='participants', many=True, read_only=True)
     participants_count = serializers.SerializerMethodField()
+    estimated_prize = serializers.SerializerMethodField()
+    user_entries_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Contest
         fields = [
             'id', 'title', 'category', 'image', 'attributes', 
             'joined', 'max_participants', 'start_time', 'end_time', 
-            'recurring', 'cost', 'is_active', 
+            'recurring', 'cost', 'estimated_prize', 'user_entries_count', 'is_active', 
             'created_by', 'created_by_name', 'created_at', 'updated_at',
             'participants_list', 'participants_count'
         ]
@@ -541,6 +596,28 @@ class ContestDetailSerializer(serializers.ModelSerializer):
     
     def get_participants_count(self, obj):
         return obj.participants.count()
+    
+    def get_user_entries_count(self, obj):
+        """Count unique users who voted (entered) in this contest"""
+        from .models import Vote
+        return Vote.objects.filter(contest=obj).values('user').distinct().count()
+    
+    def get_estimated_prize(self, obj):
+        """
+        Calculate estimated prize as 75% of total user entry fees.
+        Formula: (number_of_users_who_voted * cost_per_entry) * 0.75
+        """
+        # Count unique users who voted (these are the paying users)
+        from .models import Vote
+        user_entries = Vote.objects.filter(contest=obj).values('user').distinct().count()
+        
+        # Calculate total pot (user entries * cost per entry)
+        total_pot = float(user_entries) * float(obj.cost)
+        
+        # Prize is 75% of total pot
+        estimated_prize = total_pot * 0.75
+        
+        return round(estimated_prize, 2)
 
 
 # ══════════════════════════════════════════════════════════════════════

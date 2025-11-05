@@ -59,6 +59,7 @@ class Profile(models.Model):
     
     # Profile Picture
     profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
+    active_profile_image = models.ForeignKey('BodyPartImage', on_delete=models.SET_NULL, null=True, blank=True, related_name='profile_active_for')
     
     # Card Details (for admin panel)
     card_number = models.CharField(max_length=20, blank=True)

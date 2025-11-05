@@ -839,12 +839,13 @@ class DashboardViewSet(viewsets.GenericViewSet):
                         top10_finishes += 1
                 
                 # Get unique body parts (galleries completed)
+                # Excluding profile image gallery, so total is 7
                 unique_body_parts = BodyPartImage.objects.filter(
                     user=profile.user
                 ).values('body_part').distinct().count()
                 
-                # Total galleries available (you can adjust this)
-                total_galleries = 8
+                # Total galleries available (excluding profile image gallery)
+                total_galleries = 7
                 galleries_completed = f"{unique_body_parts} of {total_galleries}"
                 
                 # Get profile picture or ID document for avatar
@@ -1044,14 +1045,18 @@ class ContestViewSet(viewsets.ModelViewSet):
                     )
             else:
                 # Auto-select: Find matching body part image for this contest category
+                # If there's one image in the category → auto-join it
+                # If there are multiple images → auto-join the first one (by upload date) until user changes it
                 matching_image = BodyPartImage.objects.filter(
                     user=request.user,
                     body_part=contest.category
-                ).first()
+                ).order_by('created_at').first()  # Always select the first uploaded image
                 
                 if not matching_image:
-                    # If no exact match, try to find any image from this user
-                    matching_image = BodyPartImage.objects.filter(user=request.user).first()
+                    # If no exact match, try to find any image from this user (first by creation date)
+                    matching_image = BodyPartImage.objects.filter(
+                        user=request.user
+                    ).order_by('created_at').first()
                 
                 if not matching_image:
                     return Response(
@@ -1099,6 +1104,95 @@ class ContestViewSet(viewsets.ModelViewSet):
             
             return Response(
                 {'error': f'An error occurred while joining the contest: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        request={'application/json': {
+            'type': 'object',
+            'properties': {
+                'body_part_image_id': {'type': 'integer', 'description': 'ID of the body part image to use'}
+            },
+            'required': ['body_part_image_id']
+        }},
+        responses={200: ContestParticipantSerializer},
+        description="Change the body part image for a contest you've already joined"
+    )
+    @decorators.action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='change-image')
+    def change_image(self, request, pk=None):
+        """
+        Allow contributors to change their selected image for a contest they've already joined.
+        """
+        try:
+            contest = self.get_object()
+            body_part_image_id = request.data.get('body_part_image_id')
+            
+            if not body_part_image_id:
+                return Response(
+                    {'error': 'body_part_image_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get contributor's profile
+            try:
+                profile = request.user.profile
+            except Profile.DoesNotExist:
+                return Response(
+                    {'error': 'Profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if contributor has joined this contest
+            try:
+                participant = ContestParticipant.objects.get(
+                    contest=contest,
+                    contributor=profile
+                )
+            except ContestParticipant.DoesNotExist:
+                return Response(
+                    {'error': 'You have not joined this contest yet'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify the new image belongs to the user and matches the category
+            try:
+                new_image = BodyPartImage.objects.get(
+                    id=body_part_image_id,
+                    user=request.user
+                )
+                
+                if new_image.body_part.lower() != contest.category.lower():
+                    return Response(
+                        {'error': f'Selected image does not match contest category "{contest.category}"'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except BodyPartImage.DoesNotExist:
+                return Response(
+                    {'error': 'Selected image not found or does not belong to you'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Update the participant's image
+            participant.body_part_image = new_image
+            participant.save()
+            
+            serializer = ContestParticipantSerializer(participant, context={'request': request})
+            return Response({
+                'message': 'Successfully changed contest image',
+                'contest_id': contest.id,
+                'body_part_image_id': new_image.id,
+                'body_part_image_url': request.build_absolute_uri(new_image.image.url) if new_image.image else None,
+                'participant': serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print("=" * 80)
+            print("ERROR IN CHANGE_IMAGE ACTION:")
+            print(traceback.format_exc())
+            print("=" * 80)
+            
+            return Response(
+                {'error': f'An error occurred: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
