@@ -976,8 +976,9 @@ class ContestViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def join(self, request, pk=None):
         """
-        Allow contributors to join a contest.
-        Contributors are automatically checked for eligibility based on their profile attributes.
+        Allow users and contributors to join a contest.
+        - Users/Judges: Enter to vote (no image required)
+        - Contributors: Participate with their images (image required)
         """
         try:
             contest = self.get_object()
@@ -998,12 +999,8 @@ class ContestViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Check if profile is a contributor
-            if profile.role != 'contributor':
-                return Response(
-                    {'error': 'Only contributors can join contests'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+            # Allow both users (judges) and contributors to join
+            # Users join for voting, contributors join to participate
             
             # Check if contest is full (using dynamic count)
             current_participants = contest.participants.count()
@@ -1013,12 +1010,18 @@ class ContestViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Check if already joined
-            if ContestParticipant.objects.filter(contest=contest, contributor=profile).exists():
-                return Response(
-                    {'error': 'You have already joined this contest'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            # Check if already joined - if so, return success so frontend can navigate to voting
+            existing_participant = ContestParticipant.objects.filter(contest=contest, contributor=profile).first()
+            if existing_participant:
+                serializer = ContestParticipantSerializer(existing_participant, context={'request': request})
+                return Response({
+                    'message': 'Already joined - opening contest',
+                    'already_joined': True,
+                    'contest_id': contest.id,
+                    'contest_name': contest.title,
+                    'joined_at': existing_participant.joined_at,
+                    'participant': serializer.data
+                }, status=status.HTTP_200_OK)
             
             # ELIGIBILITY CHECK DISABLED - Allow any contributor to join any contest
             # Uncomment the lines below to re-enable attribute-based eligibility checking:
@@ -1029,78 +1032,81 @@ class ContestViewSet(viewsets.ModelViewSet):
             #         status=status.HTTP_400_BAD_REQUEST
             #     )
             
-            # Get body_part_image_id from request if provided
-            body_part_image_id = request.data.get('body_part_image_id', None)
+            # Image handling - only required for contributors
+            matching_image = None
             
-            if body_part_image_id:
-                # User selected a specific image
-                try:
-                    matching_image = BodyPartImage.objects.get(
-                        id=body_part_image_id,
-                        user=request.user
-                    )
-                    # Verify the image matches the contest category
-                    if matching_image.body_part.lower() != contest.category.lower():
+            if profile.role == 'contributor':
+                # Get body_part_image_id from request if provided
+                body_part_image_id = request.data.get('body_part_image_id', None)
+                
+                if body_part_image_id:
+                    # User selected a specific image
+                    try:
+                        matching_image = BodyPartImage.objects.get(
+                            id=body_part_image_id,
+                            user=request.user
+                        )
+                        # Verify the image matches the contest category
+                        if matching_image.body_part.lower() != contest.category.lower():
+                            return Response(
+                                {'error': f'Selected image does not match contest category "{contest.category}"'},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                    except BodyPartImage.DoesNotExist:
                         return Response(
-                            {'error': f'Selected image does not match contest category "{contest.category}"'},
+                            {'error': 'Selected image not found or does not belong to you'},
+                            status=status.HTTP_404_NOT_FOUND
+                        )
+                else:
+                    # Auto-select: Find matching body part image for this contest category
+                    # If there's one image in the category → auto-join it
+                    # If there are multiple images → auto-join the first one (by upload date) until user changes it
+                    matching_image = BodyPartImage.objects.filter(
+                        user=request.user,
+                        body_part=contest.category
+                    ).order_by('created_at').first()  # Always select the first uploaded image
+                    
+                    if not matching_image:
+                        # If no exact match, try to find any image from this user (first by creation date)
+                        matching_image = BodyPartImage.objects.filter(
+                            user=request.user
+                        ).order_by('created_at').first()
+                    
+                    if not matching_image:
+                        return Response(
+                            {'error': f'You need to upload a "{contest.category}" image before joining this contest'},
                             status=status.HTTP_400_BAD_REQUEST
                         )
-                except BodyPartImage.DoesNotExist:
-                    return Response(
-                        {'error': 'Selected image not found or does not belong to you'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-            else:
-                # Auto-select: Find matching body part image for this contest category
-                # If there's one image in the category → auto-join it
-                # If there are multiple images → auto-join the first one (by upload date) until user changes it
-                matching_image = BodyPartImage.objects.filter(
-                    user=request.user,
-                    body_part=contest.category
-                ).order_by('created_at').first()  # Always select the first uploaded image
-                
-                if not matching_image:
-                    # If no exact match, try to find any image from this user (first by creation date)
-                    matching_image = BodyPartImage.objects.filter(
-                        user=request.user
-                    ).order_by('created_at').first()
-                
-                if not matching_image:
-                    return Response(
-                        {'error': f'You need to upload a "{contest.category}" image before joining this contest'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
             
-            # Try to create participant entry using get_or_create to prevent duplicates
-            participant, created = ContestParticipant.objects.get_or_create(
+            # Create participant entry
+            # For users/judges, body_part_image can be None (they're just voting)
+            # For contributors, body_part_image is required
+            participant = ContestParticipant.objects.create(
                 contest=contest,
                 contributor=profile,
-                defaults={
-                    'auto_entry': False,
-                    'body_part_image': matching_image
-                }
+                auto_entry=False,
+                body_part_image=matching_image  # None for users, image for contributors
             )
             
-            if not created:
-                # User already joined this contest
-                return Response(
-                    {'error': 'You have already joined this contest'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Create notifications for users who favorited this contributor's images
-            self._create_favorite_notifications(request.user, profile, contest)
+            # Create notifications for users who favorited this contributor's images (only for contributors)
+            if profile.role == 'contributor':
+                self._create_favorite_notifications(request.user, profile, contest)
             
             serializer = ContestParticipantSerializer(participant, context={'request': request})
-            return Response({
-                'message': 'Successfully joined the contest',
+            response_data = {
+                'message': 'Successfully joined the contest' if profile.role == 'contributor' else 'Successfully entered the contest for voting',
                 'contest_id': contest.id,
                 'contest_name': contest.title,
-                'body_part_image_id': matching_image.id,
-                'body_part_image_url': request.build_absolute_uri(matching_image.image.url) if matching_image.image else None,
                 'joined_at': participant.joined_at,
                 'participant': serializer.data
-            }, status=status.HTTP_201_CREATED)
+            }
+            
+            # Add image info only for contributors
+            if matching_image:
+                response_data['body_part_image_id'] = matching_image.id
+                response_data['body_part_image_url'] = request.build_absolute_uri(matching_image.image.url) if matching_image.image else None
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
         
         except Exception as e:
             # Log the error for debugging
