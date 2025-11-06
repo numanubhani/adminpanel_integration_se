@@ -412,6 +412,10 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 photo_galleries = {}
                 for img in body_part_images:
                     category = img.body_part
+                    # Exclude "All Photos" and "Profile Picture" categories
+                    if category in ['All Photos', 'Profile Picture']:
+                        continue
+                    
                     if category not in photo_galleries:
                         photo_galleries[category] = []
                     
@@ -435,6 +439,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 
                 # Count total images
                 total_images = body_part_images.count()
+                # Count filled categories (excluding "All photos" and "Profile picture")
                 filled_categories = len(photo_galleries.keys())
                 
                 contributor_dict = {
@@ -839,12 +844,14 @@ class DashboardViewSet(viewsets.GenericViewSet):
                         top10_finishes += 1
                 
                 # Get unique body parts (galleries completed)
-                # Excluding profile image gallery, so total is 7
+                # Excluding "All Photos" and "Profile Picture" categories, so total is 7
                 unique_body_parts = BodyPartImage.objects.filter(
                     user=profile.user
+                ).exclude(
+                    body_part__in=['All Photos', 'Profile Picture']
                 ).values('body_part').distinct().count()
                 
-                # Total galleries available (excluding profile image gallery)
+                # Total galleries available (excluding "All Photos" and "Profile Picture")
                 total_galleries = 7
                 galleries_completed = f"{unique_body_parts} of {total_galleries}"
                 
