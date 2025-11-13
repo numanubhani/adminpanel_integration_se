@@ -485,6 +485,8 @@ class ContestSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source='created_by.profile.screen_name', read_only=True)
     joined = serializers.SerializerMethodField()
     participants_count = serializers.SerializerMethodField()
+    user_participants_count = serializers.SerializerMethodField()
+    contributor_participants_count = serializers.SerializerMethodField()
     estimated_prize = serializers.SerializerMethodField()
     available_from = serializers.SerializerMethodField()
     is_available_for_joining = serializers.SerializerMethodField()
@@ -493,7 +495,8 @@ class ContestSerializer(serializers.ModelSerializer):
         model = Contest
         fields = [
             'id', 'title', 'category', 'image', 'attributes', 
-            'joined', 'participants_count', 'max_participants', 'start_time', 'end_time', 
+            'joined', 'participants_count', 'user_participants_count', 'contributor_participants_count', 
+            'max_participants', 'start_time', 'end_time', 
             'recurring', 'parent_contest', 'next_generation_date', 'is_recurring_template',
             'available_from', 'is_available_for_joining', 'cost', 'estimated_prize', 'is_active', 
             'created_by', 'created_by_name', 'created_at', 'updated_at'
@@ -504,27 +507,34 @@ class ContestSerializer(serializers.ModelSerializer):
         ]
     
     def get_joined(self, obj):
-        """Count how many contributors have joined this contest"""
+        """Count total participants (both users and contributors) joined this contest"""
         return obj.participants.count()
     
     def get_participants_count(self, obj):
-        """Count how many contributors have joined this contest"""
+        """Count total participants (both users and contributors) joined this contest"""
         return obj.participants.count()
+    
+    def get_user_participants_count(self, obj):
+        """Count only users (judges/voters) who joined this contest"""
+        return obj.participants.filter(contributor__role='user').count()
+    
+    def get_contributor_participants_count(self, obj):
+        """Count only contributors (participants) who joined this contest"""
+        return obj.participants.filter(contributor__role='contributor').count()
     
     def get_estimated_prize(self, obj):
         """
         Calculate estimated prize as 75% of total user entry fees.
         Formula: (number_of_user_participants * cost_per_entry) * 0.75
         
-        Note: Only counts users (not contributors) who paid to join.
+        Note: Only counts users (role='user') who paid to join, not contributors.
         Contributors join for free and compete for the prize.
         """
-        # For now, assume all participants are paying users
-        # In a real system, you'd count only users who paid
-        total_participants = obj.participants.count()
+        # Count only users (judges/voters) who paid to join, not contributors
+        user_participants = obj.participants.filter(contributor__role='user').count()
         
-        # Calculate total pot (participants * cost per entry)
-        total_pot = float(total_participants) * float(obj.cost)
+        # Calculate total pot (user participants * cost per entry)
+        total_pot = float(user_participants) * float(obj.cost)
         
         # Prize is 75% of total pot
         estimated_prize = total_pot * 0.75
@@ -616,6 +626,7 @@ class ContestDetailSerializer(serializers.ModelSerializer):
         ]
     
     def get_participants_count(self, obj):
+        """Count total participants (both users and contributors) joined this contest"""
         return obj.participants.count()
     
     def get_user_entries_count(self, obj):
@@ -626,14 +637,16 @@ class ContestDetailSerializer(serializers.ModelSerializer):
     def get_estimated_prize(self, obj):
         """
         Calculate estimated prize as 75% of total user entry fees.
-        Formula: (number_of_users_who_voted * cost_per_entry) * 0.75
-        """
-        # Count unique users who voted (these are the paying users)
-        from .models import Vote
-        user_entries = Vote.objects.filter(contest=obj).values('user').distinct().count()
+        Formula: (number_of_user_participants * cost_per_entry) * 0.75
         
-        # Calculate total pot (user entries * cost per entry)
-        total_pot = float(user_entries) * float(obj.cost)
+        Note: Only counts users (role='user') who paid to join, not contributors.
+        Contributors join for free and compete for the prize.
+        """
+        # Count only users (judges/voters) who paid to join, not contributors
+        user_participants = obj.participants.filter(contributor__role='user').count()
+        
+        # Calculate total pot (user participants * cost per entry)
+        total_pot = float(user_participants) * float(obj.cost)
         
         # Prize is 75% of total pot
         estimated_prize = total_pot * 0.75
