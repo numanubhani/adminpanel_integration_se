@@ -943,11 +943,35 @@ class ContestViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """
-        Optionally filter contests by category, active status, etc.
+        Filter contests by availability rules and other parameters.
+        Only show contests that are available for joining based on advance availability rules.
         """
-        queryset = Contest.objects.all()
+        from django.utils import timezone
+        from datetime import timedelta
         
-        # Filter by active status
+        now = timezone.now()
+        
+        # Start with base queryset
+        queryset = Contest.objects.filter(is_active=True)
+        
+        # Check if this is an admin request (show all contests for admin)
+        if hasattr(self.request.user, 'admin_profile') and self.request.user.admin_profile:
+            # Admin can see all contests, including templates
+            queryset = Contest.objects.all()
+        else:
+            # For regular users and contributors, apply availability rules
+            # Exclude recurring templates (they're not meant to be joined directly)
+            queryset = queryset.filter(is_recurring_template=False)
+            
+            # Apply advance availability filtering
+            available_contests = []
+            for contest in queryset:
+                if contest.is_available_for_joining():
+                    available_contests.append(contest.id)
+            
+            queryset = queryset.filter(id__in=available_contests)
+        
+        # Filter by active status (if explicitly requested)
         is_active = self.request.query_params.get('is_active', None)
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
@@ -956,6 +980,11 @@ class ContestViewSet(viewsets.ModelViewSet):
         category = self.request.query_params.get('category', None)
         if category:
             queryset = queryset.filter(category=category)
+        
+        # Filter by recurring type (for admin)
+        recurring = self.request.query_params.get('recurring', None)
+        if recurring:
+            queryset = queryset.filter(recurring=recurring)
         
         return queryset.order_by('-created_at')
     

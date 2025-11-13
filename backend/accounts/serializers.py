@@ -486,16 +486,22 @@ class ContestSerializer(serializers.ModelSerializer):
     joined = serializers.SerializerMethodField()
     participants_count = serializers.SerializerMethodField()
     estimated_prize = serializers.SerializerMethodField()
+    available_from = serializers.SerializerMethodField()
+    is_available_for_joining = serializers.SerializerMethodField()
     
     class Meta:
         model = Contest
         fields = [
             'id', 'title', 'category', 'image', 'attributes', 
             'joined', 'participants_count', 'max_participants', 'start_time', 'end_time', 
-            'recurring', 'cost', 'estimated_prize', 'is_active', 
+            'recurring', 'parent_contest', 'next_generation_date', 'is_recurring_template',
+            'available_from', 'is_available_for_joining', 'cost', 'estimated_prize', 'is_active', 
             'created_by', 'created_by_name', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'created_by', 'created_by_name', 'created_at', 'updated_at',
+            'next_generation_date', 'available_from', 'is_available_for_joining'
+        ]
     
     def get_joined(self, obj):
         """Count how many contributors have joined this contest"""
@@ -524,6 +530,14 @@ class ContestSerializer(serializers.ModelSerializer):
         estimated_prize = total_pot * 0.75
         
         return round(estimated_prize, 2)
+    
+    def get_available_from(self, obj):
+        """Get the date when this contest becomes available for joining"""
+        return obj.calculate_available_from_date()
+    
+    def get_is_available_for_joining(self, obj):
+        """Check if this contest is currently available for joining"""
+        return obj.is_available_for_joining()
     
     def validate(self, data):
         """Validate that end_time is after start_time"""
@@ -582,17 +596,24 @@ class ContestDetailSerializer(serializers.ModelSerializer):
     participants_count = serializers.SerializerMethodField()
     estimated_prize = serializers.SerializerMethodField()
     user_entries_count = serializers.SerializerMethodField()
+    available_from = serializers.SerializerMethodField()
+    is_available_for_joining = serializers.SerializerMethodField()
     
     class Meta:
         model = Contest
         fields = [
             'id', 'title', 'category', 'image', 'attributes', 
             'joined', 'max_participants', 'start_time', 'end_time', 
-            'recurring', 'cost', 'estimated_prize', 'user_entries_count', 'is_active', 
+            'recurring', 'parent_contest', 'next_generation_date', 'is_recurring_template',
+            'available_from', 'is_available_for_joining', 'cost', 'estimated_prize', 'user_entries_count', 'is_active', 
             'created_by', 'created_by_name', 'created_at', 'updated_at',
             'participants_list', 'participants_count'
         ]
-        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at', 'participants_list', 'participants_count']
+        read_only_fields = [
+            'id', 'created_by', 'created_by_name', 'created_at', 'updated_at', 
+            'participants_list', 'participants_count', 'next_generation_date', 
+            'available_from', 'is_available_for_joining'
+        ]
     
     def get_participants_count(self, obj):
         return obj.participants.count()
@@ -618,6 +639,14 @@ class ContestDetailSerializer(serializers.ModelSerializer):
         estimated_prize = total_pot * 0.75
         
         return round(estimated_prize, 2)
+    
+    def get_available_from(self, obj):
+        """Get the date when this contest becomes available for joining"""
+        return obj.calculate_available_from_date()
+    
+    def get_is_available_for_joining(self, obj):
+        """Check if this contest is currently available for joining"""
+        return obj.is_available_for_joining()
 
 
 # ══════════════════════════════════════════════════════════════════════

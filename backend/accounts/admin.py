@@ -67,10 +67,10 @@ class AdminAdmin(admin.ModelAdmin):
 
 @admin.register(Contest)
 class ContestAdmin(admin.ModelAdmin):
-    list_display = ("id", "title", "category", "joined", "max_participants", "start_time", "end_time", "is_active", "created_by")
-    list_filter = ("category", "is_active", "recurring", "created_at")
+    list_display = ("id", "title", "category", "joined", "max_participants", "start_time", "end_time", "recurring", "is_recurring_template", "is_active", "created_by")
+    list_filter = ("category", "is_active", "recurring", "is_recurring_template", "created_at")
     search_fields = ("title", "category")
-    readonly_fields = ("created_at", "updated_at", "joined")
+    readonly_fields = ("created_at", "updated_at", "joined", "next_generation_date")
     fieldsets = (
         ("Basic Info", {
             "fields": ("title", "category", "image", "is_active")
@@ -83,6 +83,10 @@ class ContestAdmin(admin.ModelAdmin):
         }),
         ("Schedule", {
             "fields": ("start_time", "end_time", "recurring")
+        }),
+        ("Recurring Settings", {
+            "fields": ("is_recurring_template", "parent_contest", "next_generation_date"),
+            "description": "Recurring contest configuration. Templates generate new contests automatically."
         }),
         ("Payment", {
             "fields": ("cost",)

@@ -148,6 +148,11 @@ class Contest(models.Model):
     end_time = models.DateTimeField()
     recurring = models.CharField(max_length=20, choices=RECURRING_CHOICES, default="none")
     
+    # Recurring contest tracking
+    parent_contest = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='recurring_instances')
+    next_generation_date = models.DateTimeField(null=True, blank=True)
+    is_recurring_template = models.BooleanField(default=False)  # Original contest that generates others
+    
     # Cost
     cost = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     
@@ -159,6 +164,140 @@ class Contest(models.Model):
     
     def __str__(self):
         return f"{self.title} - {self.category}"
+    
+    def save(self, *args, **kwargs):
+        # If this is a new recurring contest, set it as template and calculate next generation
+        if self.recurring != "none" and not self.pk:
+            self.is_recurring_template = True
+            self.next_generation_date = self.calculate_next_generation_date()
+        super().save(*args, **kwargs)
+    
+    def calculate_next_generation_date(self):
+        """Calculate when the next recurring contest should be generated"""
+        from datetime import timedelta
+        
+        if self.recurring == "daily":
+            # Generate 1 day before start time (24 hours advance)
+            return self.start_time - timedelta(days=1)
+        elif self.recurring == "weekly":
+            # Generate 1 week before start time (7 days advance)
+            return self.start_time - timedelta(weeks=1)
+        elif self.recurring == "monthly":
+            # Generate 1 month before start time (approximately 30 days advance)
+            return self.start_time - timedelta(days=30)
+        return None
+    
+    def get_advance_period(self):
+        """Get how many days/weeks/months in advance the contest should be available"""
+        if self.recurring == "daily":
+            return {"days": 1}
+        elif self.recurring == "weekly":
+            return {"days": 7}
+        elif self.recurring == "monthly":
+            return {"days": 30}
+        return {"days": 0}
+    
+    def calculate_available_from_date(self):
+        """Calculate when this contest should become available for contributors to join"""
+        from datetime import timedelta
+        
+        if self.recurring == "daily":
+            return self.start_time - timedelta(days=1)
+        elif self.recurring == "weekly":
+            return self.start_time - timedelta(days=7)
+        elif self.recurring == "monthly":
+            return self.start_time - timedelta(days=30)
+        # For one-time contests, available immediately
+        return self.created_at
+    
+    def is_available_for_joining(self):
+        """Check if this contest is available for contributors to join"""
+        from django.utils import timezone
+        now = timezone.now()
+        
+        # Must be active
+        if not self.is_active:
+            return False
+            
+        # Must not have ended
+        if now > self.end_time:
+            return False
+            
+        # Check advance availability rules
+        available_from = self.calculate_available_from_date()
+        return now >= available_from
+    
+    def generate_next_recurring_contest(self):
+        """Generate the next instance of this recurring contest"""
+        from datetime import timedelta
+        from dateutil.relativedelta import relativedelta
+        
+        if self.recurring == "none":
+            return None
+            
+        # Calculate new dates based on recurring type
+        if self.recurring == "daily":
+            new_start = self.start_time + timedelta(days=1)
+            new_end = self.end_time + timedelta(days=1)
+        elif self.recurring == "weekly":
+            new_start = self.start_time + timedelta(weeks=1)
+            new_end = self.end_time + timedelta(weeks=1)
+        elif self.recurring == "monthly":
+            new_start = self.start_time + relativedelta(months=1)
+            new_end = self.end_time + relativedelta(months=1)
+        else:
+            return None
+            
+        # Create new contest instance
+        new_contest = Contest.objects.create(
+            title=self.title,
+            category=self.category,
+            image=self.image,
+            attributes=self.attributes.copy(),
+            max_participants=self.max_participants,
+            start_time=new_start,
+            end_time=new_end,
+            recurring=self.recurring,
+            cost=self.cost,
+            created_by=self.created_by,
+            is_active=True,
+            parent_contest=self if self.is_recurring_template else self.parent_contest,
+            is_recurring_template=False
+        )
+        
+        # Update next generation date for the template
+        if self.is_recurring_template:
+            if self.recurring == "daily":
+                self.next_generation_date = new_start - timedelta(days=1)
+            elif self.recurring == "weekly":
+                self.next_generation_date = new_start - timedelta(days=7)
+            elif self.recurring == "monthly":
+                self.next_generation_date = new_start - timedelta(days=30)
+            self.save()
+        
+        return new_contest
+    
+    @classmethod
+    def generate_due_recurring_contests(cls):
+        """Generate all recurring contests that are due"""
+        from django.utils import timezone
+        now = timezone.now()
+        
+        # Find all template contests that need generation
+        due_templates = cls.objects.filter(
+            is_recurring_template=True,
+            recurring__in=['daily', 'weekly', 'monthly'],
+            next_generation_date__lte=now,
+            is_active=True
+        )
+        
+        generated_contests = []
+        for template in due_templates:
+            new_contest = template.generate_next_recurring_contest()
+            if new_contest:
+                generated_contests.append(new_contest)
+        
+        return generated_contests
     
     class Meta:
         verbose_name = "Contest"

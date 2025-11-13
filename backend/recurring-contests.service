@@ -1,0 +1,14 @@
+[Unit]
+Description=Recurring Contest Generation
+After=network.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/path/to/your/project
+Environment=DJANGO_SETTINGS_MODULE=backend.settings
+ExecStart=/path/to/your/project/venv/bin/python /path/to/your/project/manage.py generate_recurring_contests
+
+[Install]
+WantedBy=multi-user.target
