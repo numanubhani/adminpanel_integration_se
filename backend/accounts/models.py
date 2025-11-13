@@ -166,10 +166,21 @@ class Contest(models.Model):
         return f"{self.title} - {self.category}"
     
     def save(self, *args, **kwargs):
-        # If this is a new recurring contest, set it as template and calculate next generation
+        # Handle recurring contest logic
         if self.recurring != "none" and not self.pk:
-            self.is_recurring_template = True
-            self.next_generation_date = self.calculate_next_generation_date()
+            # Check if this should be a template (for management commands) or regular contest (for admin panel)
+            force_template = getattr(self, '_force_template', False)
+            
+            if force_template:
+                # Explicitly created as template by management command
+                self.is_recurring_template = True
+                self.next_generation_date = self.calculate_next_generation_date()
+            else:
+                # Created from admin panel - make it a regular contest that users can join
+                self.is_recurring_template = False
+                # Set next generation date for this contest to generate future instances
+                self.next_generation_date = self.calculate_next_generation_date()
+        
         super().save(*args, **kwargs)
     
     def calculate_next_generation_date(self):
@@ -261,19 +272,18 @@ class Contest(models.Model):
             cost=self.cost,
             created_by=self.created_by,
             is_active=True,
-            parent_contest=self if self.is_recurring_template else self.parent_contest,
+            parent_contest=self.parent_contest or self,  # Link to parent or self if no parent
             is_recurring_template=False
         )
         
-        # Update next generation date for the template
-        if self.is_recurring_template:
-            if self.recurring == "daily":
-                self.next_generation_date = new_start - timedelta(days=1)
-            elif self.recurring == "weekly":
-                self.next_generation_date = new_start - timedelta(days=7)
-            elif self.recurring == "monthly":
-                self.next_generation_date = new_start - timedelta(days=30)
-            self.save()
+        # Update next generation date (works for both templates and regular recurring contests)
+        if self.recurring == "daily":
+            self.next_generation_date = new_start - timedelta(days=1)
+        elif self.recurring == "weekly":
+            self.next_generation_date = new_start - timedelta(days=7)
+        elif self.recurring == "monthly":
+            self.next_generation_date = new_start - timedelta(days=30)
+        self.save()
         
         return new_contest
     
@@ -283,17 +293,16 @@ class Contest(models.Model):
         from django.utils import timezone
         now = timezone.now()
         
-        # Find all template contests that need generation
-        due_templates = cls.objects.filter(
-            is_recurring_template=True,
+        # Find all recurring contests (both templates and regular) that need generation
+        due_contests = cls.objects.filter(
             recurring__in=['daily', 'weekly', 'monthly'],
             next_generation_date__lte=now,
             is_active=True
         )
         
         generated_contests = []
-        for template in due_templates:
-            new_contest = template.generate_next_recurring_contest()
+        for contest in due_contests:
+            new_contest = contest.generate_next_recurring_contest()
             if new_contest:
                 generated_contests.append(new_contest)
         

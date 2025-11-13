@@ -955,7 +955,13 @@ class ContestViewSet(viewsets.ModelViewSet):
         queryset = Contest.objects.filter(is_active=True)
         
         # Check if this is an admin request (show all contests for admin)
-        if hasattr(self.request.user, 'admin_profile') and self.request.user.admin_profile:
+        try:
+            admin = Admin.objects.get(profile__user=self.request.user)
+            is_admin_user = admin.is_admin
+        except Admin.DoesNotExist:
+            is_admin_user = False
+        
+        if is_admin_user:
             # Admin can see all contests, including templates
             queryset = Contest.objects.all()
         else:
