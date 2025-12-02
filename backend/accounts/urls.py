@@ -9,6 +9,7 @@ from .views import (
     ContestViewSet,
     SmokeSignalViewSet,
     FavoriteImageViewSet,
+    FavoriteGalleryViewSet,
     VoteViewSet,
     NotificationViewSet,
 )
@@ -30,6 +31,9 @@ router.register("smoke-signals", SmokeSignalViewSet, basename="smoke-signals")
 
 # Favorite Images
 router.register("favorites", FavoriteImageViewSet, basename="favorites")
+
+# Favorite Galleries
+router.register("favorite-galleries", FavoriteGalleryViewSet, basename="favorite-galleries")
 
 # Votes
 router.register("votes", VoteViewSet, basename="votes")

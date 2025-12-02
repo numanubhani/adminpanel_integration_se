@@ -387,6 +387,26 @@ class FavoriteImage(models.Model):
         return f"{self.user.username} favorited {self.body_part_image.body_part} by {self.body_part_image.user.username}"
 
 
+class FavoriteGallery(models.Model):
+    """
+    Model for tracking favorite galleries (contributor + body part).
+    Users can favorite an entire gallery instead of individual images.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="favorite_galleries")
+    contributor = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="favorited_galleries")
+    body_part = models.CharField(max_length=50)  # e.g. "Full Body", "Feet"
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'contributor', 'body_part')
+        ordering = ['-created_at']
+        verbose_name = "Favorite Gallery"
+        verbose_name_plural = "Favorite Galleries"
+
+    def __str__(self):
+        return f"{self.user.username} favorited {self.body_part} gallery of {self.contributor.screen_name or self.contributor.user.username}"
+
+
 class Vote(models.Model):
     """
     Model for tracking votes in contests.

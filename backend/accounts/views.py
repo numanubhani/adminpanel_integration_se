@@ -15,7 +15,7 @@ import os
 import traceback
 import json
 
-from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, Vote, Notification
+from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification
 from .serializers import (
     RegisterSerializer,
     ProfileSerializer,
@@ -31,6 +31,7 @@ from .serializers import (
     BodyPartImageSerializer,
     FavoriteImageSerializer,
     AddFavoriteSerializer,
+    FavoriteGallerySerializer,
     VoteSerializer,
     CastVoteSerializer,
     NotificationSerializer,
@@ -1036,7 +1037,7 @@ class ContestViewSet(viewsets.ModelViewSet):
             
             # Allow both users (judges) and contributors to join
             # Users join for voting, contributors join to participate
-            
+
             # Check if contest is full (using dynamic count)
             current_participants = contest.participants.count()
             if current_participants >= contest.max_participants:
@@ -1060,12 +1061,14 @@ class ContestViewSet(viewsets.ModelViewSet):
             
             # ELIGIBILITY CHECK DISABLED - Allow any contributor to join any contest
             # Uncomment the lines below to re-enable attribute-based eligibility checking:
-            # is_eligible = self._check_eligibility(profile, contest)
-            # if not is_eligible:
-            #     return Response(
-            #         {'error': 'You do not meet the contest requirements'},
-            #         status=status.HTTP_400_BAD_REQUEST
-            #     )
+            # Re-enable attribute-based eligibility checking for contributors only
+            if profile.role == 'contributor':
+                is_eligible = self._check_eligibility(profile, contest)
+                if not is_eligible:
+                    return Response(
+                        {'error': 'You do not meet the contest requirements for this contest'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
             # Image handling - only required for contributors
             matching_image = None
@@ -1668,6 +1671,84 @@ class FavoriteImageViewSet(viewsets.ModelViewSet):
             serializer = FavoriteImageSerializer(favorite, context={'request': request})
             return Response(
                 {'message': 'Image added to favorites', 'is_favorite': True, 'favorite': serializer.data},
+                status=status.HTTP_200_OK
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# FAVORITE GALLERY VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class FavoriteGalleryViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing favorite galleries (contributor + body part).
+    """
+    serializer_class = FavoriteGallerySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Return only the logged-in user's favorite galleries"""
+        return FavoriteGallery.objects.filter(user=self.request.user).select_related(
+            'contributor', 'contributor__user'
+        )
+
+    @extend_schema(
+        summary="Toggle favorite status for a gallery",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'contributor_id': {'type': 'integer'},
+                    'body_part': {'type': 'string'},
+                },
+                'required': ['contributor_id', 'body_part'],
+            }
+        },
+        responses={200: {'type': 'object'}}
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='toggle')
+    def toggle(self, request):
+        """
+        Toggle favorite status for a gallery (contributor + body part).
+        """
+        contributor_id = request.data.get('contributor_id')
+        body_part = request.data.get('body_part')
+
+        if not contributor_id or not body_part:
+            return Response(
+                {'error': 'contributor_id and body_part are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            contributor = Profile.objects.get(id=contributor_id)
+        except Profile.DoesNotExist:
+            return Response(
+                {'error': 'Contributor not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        favorite = FavoriteGallery.objects.filter(
+            user=request.user,
+            contributor=contributor,
+            body_part=body_part
+        ).first()
+
+        if favorite:
+            favorite.delete()
+            return Response(
+                {'message': 'Gallery removed from favorites', 'is_favorite': False},
+                status=status.HTTP_200_OK
+            )
+        else:
+            favorite = FavoriteGallery.objects.create(
+                user=request.user,
+                contributor=contributor,
+                body_part=body_part
+            )
+            serializer = FavoriteGallerySerializer(favorite, context={'request': request})
+            return Response(
+                {'message': 'Gallery added to favorites', 'is_favorite': True, 'favorite': serializer.data},
                 status=status.HTTP_200_OK
             )
 

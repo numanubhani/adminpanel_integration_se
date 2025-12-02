@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote, Notification
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification
 
 
 # ── Register (role-aware)
@@ -14,6 +14,18 @@ class RegisterSerializer(serializers.Serializer):
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Email already registered")
         return value
+
+    def validate(self, attrs):
+        """
+        Ensure screen names are unique across all profiles when provided.
+        """
+        screen_name = attrs.get("screen_name") or ""
+        if screen_name:
+            if Profile.objects.filter(screen_name__iexact=screen_name).exists():
+                raise serializers.ValidationError(
+                    {"screenName": "This screen name is already in use. Please choose another."}
+                )
+        return attrs
 
     def create(self, validated_data):
         email = validated_data["email"].lower()
@@ -120,6 +132,18 @@ class UserRegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError("Email already registered")
         return value
 
+    def validate(self, attrs):
+        """
+        Ensure screen names are unique across all profiles when provided.
+        """
+        screen_name = attrs.get("screen_name") or ""
+        if screen_name:
+            if Profile.objects.filter(screen_name__iexact=screen_name).exists():
+                raise serializers.ValidationError(
+                    {"screenName": "This screen name is already in use. Please choose another."}
+                )
+        return attrs
+
     def create(self, validated_data):
         email = validated_data["email"].lower()
         password = validated_data["password"]
@@ -184,6 +208,18 @@ class ContributorRegisterSerializer(serializers.Serializer):
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Email already registered")
         return value
+
+    def validate(self, attrs):
+        """
+        Ensure screen names are unique across all profiles when provided.
+        """
+        screen_name = attrs.get("screen_name") or ""
+        if screen_name:
+            if Profile.objects.filter(screen_name__iexact=screen_name).exists():
+                raise serializers.ValidationError(
+                    {"screenName": "This screen name is already in use. Please choose another."}
+                )
+        return attrs
 
     def create(self, validated_data):
         email = validated_data.pop("email").lower()
@@ -401,6 +437,25 @@ class AddFavoriteSerializer(serializers.Serializer):
         if not BodyPartImage.objects.filter(id=value).exists():
             raise serializers.ValidationError("Body part image does not exist")
         return value
+
+
+class FavoriteGallerySerializer(serializers.ModelSerializer):
+    """
+    Serializer for favorite galleries (contributor + body part).
+    """
+    contributor_name = serializers.SerializerMethodField()
+    contributor_screen_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FavoriteGallery
+        fields = ['id', 'contributor', 'contributor_name', 'contributor_screen_name', 'body_part', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def get_contributor_name(self, obj):
+        return obj.contributor.legal_full_name or obj.contributor.user.username
+
+    def get_contributor_screen_name(self, obj):
+        return obj.contributor.screen_name or obj.contributor.user.username
 
 
 # ── Vote
