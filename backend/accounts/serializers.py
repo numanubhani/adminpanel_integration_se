@@ -357,10 +357,11 @@ class AddFundsSerializer(serializers.ModelSerializer):
 # ── Body Part Image
 class BodyPartImageSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    is_in_contest = serializers.SerializerMethodField()
     
     class Meta:
         model = BodyPartImage
-        fields = ["id", "body_part", "image", "image_url", "created_at"]
+        fields = ["id", "body_part", "image", "image_url", "created_at", "is_in_contest"]
     
     def get_image_url(self, obj):
         """Return full URL for the image"""
@@ -370,6 +371,10 @@ class BodyPartImageSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.image.url)
             return obj.image.url
         return None
+    
+    def get_is_in_contest(self, obj):
+        """Check if this image is being used in any active contest"""
+        return obj.contest_submissions.exists()
 
 
 # ── Favorite Image
@@ -649,6 +654,120 @@ class ContestParticipantSerializer(serializers.ModelSerializer):
     def get_votes_count(self, obj):
         """Return the total number of votes for this participant"""
         return obj.votes.count()
+
+
+class ContestParticipantDetailSerializer(serializers.ModelSerializer):
+    """
+    Detailed serializer for contest participants with contributor attributes.
+    Used for admin panel to display full contributor information.
+    """
+    contributor_name = serializers.CharField(source='contributor.screen_name', read_only=True)
+    name = serializers.CharField(source='contributor.screen_name', read_only=True)  # Alias for frontend
+    contributor_email = serializers.EmailField(source='contributor.user.email', read_only=True)
+    contest_title = serializers.CharField(source='contest.title', read_only=True)
+    body_part_image_id = serializers.IntegerField(source='body_part_image.id', read_only=True, allow_null=True)
+    body_part_image_url = serializers.SerializerMethodField()
+    votes_count = serializers.SerializerMethodField()
+    attributes = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ContestParticipant
+        fields = [
+            'id', 'contest', 'contest_title', 'contributor', 
+            'contributor_name', 'name', 'contributor_email', 
+            'body_part_image', 'body_part_image_id', 'body_part_image_url',
+            'votes_count', 'joined_at', 'auto_entry', 'attributes'
+        ]
+        read_only_fields = ['id', 'joined_at', 'body_part_image', 'votes_count', 'attributes']
+    
+    def get_body_part_image_url(self, obj):
+        """Return full URL for the body part image"""
+        if obj.body_part_image and obj.body_part_image.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.body_part_image.image.url)
+            return obj.body_part_image.image.url
+        return None
+    
+    def get_votes_count(self, obj):
+        """Return the total number of votes for this participant"""
+        return obj.votes.count()
+    
+    def get_attributes(self, obj):
+        """Return contributor's profile attributes with complete data"""
+        try:
+            # Ensure we have the contributor profile loaded
+            if not hasattr(obj, 'contributor') or not obj.contributor:
+                return self._empty_attributes()
+            
+            profile = obj.contributor
+            
+            # Refresh from database to ensure we have latest data
+            try:
+                profile.refresh_from_db()
+            except:
+                pass
+            
+            # Get all profile attributes
+            gender = profile.gender or ''
+            age = self._get_age_range(profile.age) if profile.age else ''
+            skin_tone = profile.skin_tone or ''
+            body_type = profile.body_type or profile.female_body_type or ''
+            hair_color = profile.hair_color or ''
+            bust_size = profile.bust_size or ''
+            shoe_size = profile.shoe_size or ''
+            penis_size = profile.penis_length or ''
+            
+            attributes = {
+                'Gender': gender,
+                'Age': age,
+                'Skin Tone': skin_tone,
+                'Body Type': body_type,
+                'Hair Color': hair_color,
+                'Bust Size': bust_size,
+                'Shoe Size': shoe_size,
+                'Penis Size': penis_size,
+            }
+            
+            # Debug logging
+            print(f"DEBUG: Contributor {profile.id} ({profile.screen_name}) attributes: {attributes}")
+            
+            return attributes
+        except Exception as e:
+            import traceback
+            print(f"ERROR getting attributes for participant {obj.id}: {str(e)}")
+            print(traceback.format_exc())
+            return self._empty_attributes()
+    
+    def _empty_attributes(self):
+        """Return empty attributes structure"""
+        return {
+            'Gender': '',
+            'Age': '',
+            'Skin Tone': '',
+            'Body Type': '',
+            'Hair Color': '',
+            'Bust Size': '',
+            'Shoe Size': '',
+            'Penis Size': '',
+        }
+    
+    def _get_age_range(self, age):
+        """Convert numeric age to age range"""
+        if not age:
+            return ''
+        if age <= 21:
+            return '18-21'
+        elif age <= 25:
+            return '22-25'
+        elif age <= 29:
+            return '26-29'
+        elif age <= 34:
+            return '30-34'
+        elif age <= 40:
+            return '35-40'
+        else:
+            return '40+'
 
 
 class ContestDetailSerializer(serializers.ModelSerializer):

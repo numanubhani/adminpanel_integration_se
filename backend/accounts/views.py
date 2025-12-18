@@ -26,6 +26,7 @@ from .serializers import (
     ContestSerializer,
     ContestDetailSerializer,
     ContestParticipantSerializer,
+    ContestParticipantDetailSerializer,
     SmokeSignalSerializer,
     DashboardStatsSerializer,
     BodyPartImageSerializer,
@@ -420,10 +421,14 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     if category not in photo_galleries:
                         photo_galleries[category] = []
                     
+                    # Check if image is in a contest
+                    is_in_contest = img.contest_submissions.exists()
+                    
                     photo_galleries[category].append({
                         'id': img.id,
                         'image_url': request.build_absolute_uri(img.image.url) if img.image else None,
-                        'created_at': img.created_at.isoformat() if img.created_at else None
+                        'created_at': img.created_at.isoformat() if img.created_at else None,
+                        'is_in_contest': is_in_contest
                     })
                 
                 # Calculate contest statistics
@@ -995,6 +1000,36 @@ class ContestViewSet(viewsets.ModelViewSet):
         
         return queryset.order_by('-created_at')
     
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Override retrieve to add start time validation for users/judges.
+        If contest hasn't started, return a flag indicating it's in waiting room.
+        """
+        instance = self.get_object()
+        response = super().retrieve(request, *args, **kwargs)
+        
+        # Check if user is a regular user/judge (not contributor or admin)
+        try:
+            profile = request.user.profile
+            is_user_or_judge = profile.role in ['user', 'Judge']
+        except (Profile.DoesNotExist, AttributeError):
+            is_user_or_judge = False
+        
+        # If user/judge and contest hasn't started, add waiting_room flag
+        if is_user_or_judge and instance.start_time:
+            now = timezone.now()
+            if now < instance.start_time:
+                response.data['waiting_room'] = True
+                response.data['contest_not_started'] = True
+            else:
+                response.data['waiting_room'] = False
+                response.data['contest_not_started'] = False
+        else:
+            response.data['waiting_room'] = False
+            response.data['contest_not_started'] = False
+        
+        return response
+    
     def perform_create(self, serializer):
         """Automatically set created_by to current admin"""
         try:
@@ -1049,6 +1084,11 @@ class ContestViewSet(viewsets.ModelViewSet):
             # Check if already joined - if so, return success so frontend can navigate to voting
             existing_participant = ContestParticipant.objects.filter(contest=contest, contributor=profile).first()
             if existing_participant:
+                # Check if contest has started
+                from django.utils import timezone
+                now = timezone.now()
+                contest_has_started = contest.start_time and now >= contest.start_time
+                
                 serializer = ContestParticipantSerializer(existing_participant, context={'request': request})
                 return Response({
                     'message': 'Already joined - opening contest',
@@ -1056,7 +1096,11 @@ class ContestViewSet(viewsets.ModelViewSet):
                     'contest_id': contest.id,
                     'contest_name': contest.title,
                     'joined_at': existing_participant.joined_at,
-                    'participant': serializer.data
+                    'participant': serializer.data,
+                    'contest_start_time': contest.start_time.isoformat() if contest.start_time else None,
+                    'contest_end_time': contest.end_time.isoformat() if contest.end_time else None,
+                    'contest_has_started': contest_has_started,
+                    'waiting_room': not contest_has_started if contest.start_time else False
                 }, status=status.HTTP_200_OK)
             
             # ELIGIBILITY CHECK DISABLED - Allow any contributor to join any contest
@@ -1131,12 +1175,22 @@ class ContestViewSet(viewsets.ModelViewSet):
                 self._create_favorite_notifications(request.user, profile, contest)
             
             serializer = ContestParticipantSerializer(participant, context={'request': request})
+            
+            # Check if contest has started
+            from django.utils import timezone
+            now = timezone.now()
+            contest_has_started = contest.start_time and now >= contest.start_time
+            
             response_data = {
                 'message': 'Successfully joined the contest' if profile.role == 'contributor' else 'Successfully entered the contest for voting',
                 'contest_id': contest.id,
                 'contest_name': contest.title,
                 'joined_at': participant.joined_at,
-                'participant': serializer.data
+                'participant': serializer.data,
+                'contest_start_time': contest.start_time.isoformat() if contest.start_time else None,
+                'contest_end_time': contest.end_time.isoformat() if contest.end_time else None,
+                'contest_has_started': contest_has_started,
+                'waiting_room': not contest_has_started if contest.start_time else False
             }
             
             # Add image info only for contributors
@@ -1247,6 +1301,313 @@ class ContestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @extend_schema(
+        summary="Admin: Add contributor to contest",
+        request={'application/json': {
+            'type': 'object',
+            'properties': {
+                'contributor_id': {'type': 'integer', 'description': 'ID of the contributor to add'},
+                'body_part_image_id': {'type': 'integer', 'description': 'Optional: ID of the body part image to use'}
+            },
+            'required': ['contributor_id']
+        }},
+        responses={201: ContestParticipantSerializer, 400: OpenApiResponse(description="Bad request")},
+        description="Admin endpoint to add a contributor to a contest. Sets auto_entry=True."
+    )
+    @decorators.action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='admin/add-contributor')
+    def admin_add_contributor(self, request, pk=None):
+        """
+        Admin endpoint to add a contributor to a contest.
+        This allows admins to manually add eligible contributors to contests.
+        """
+        try:
+            # Check if user is admin
+            try:
+                admin = Admin.objects.get(profile__user=request.user)
+                if not admin.is_admin:
+                    return Response(
+                        {'error': 'Only admins can add contributors to contests'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Admin.DoesNotExist:
+                return Response(
+                    {'error': 'Only admins can add contributors to contests'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            contest = self.get_object()
+            contributor_id = request.data.get('contributor_id')
+            
+            if not contributor_id:
+                return Response(
+                    {'error': 'contributor_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the contributor profile
+            try:
+                contributor_profile = Profile.objects.get(id=contributor_id, role='contributor')
+            except Profile.DoesNotExist:
+                return Response(
+                    {'error': 'Contributor not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if contest is active
+            if not contest.is_active:
+                return Response(
+                    {'error': 'This contest is not active'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if contest is full
+            current_participants = contest.participants.count()
+            if current_participants >= contest.max_participants:
+                return Response(
+                    {'error': 'Contest is full. Maximum participants reached.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if already joined
+            existing_participant = ContestParticipant.objects.filter(
+                contest=contest, 
+                contributor=contributor_profile
+            ).first()
+            
+            if existing_participant:
+                serializer = ContestParticipantSerializer(existing_participant, context={'request': request})
+                return Response({
+                    'message': 'Contributor already in contest',
+                    'already_joined': True,
+                    'participant': serializer.data
+                }, status=status.HTTP_200_OK)
+            
+            # Check eligibility
+            is_eligible = self._check_eligibility(contributor_profile, contest)
+            if not is_eligible:
+                return Response(
+                    {'error': 'Contributor does not meet the contest requirements'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Find matching body part image
+            body_part_image_id = request.data.get('body_part_image_id', None)
+            matching_image = None
+            
+            if body_part_image_id:
+                try:
+                    matching_image = BodyPartImage.objects.get(
+                        id=body_part_image_id,
+                        user=contributor_profile.user
+                    )
+                    if matching_image.body_part.lower() != contest.category.lower():
+                        return Response(
+                            {'error': f'Selected image does not match contest category "{contest.category}"'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except BodyPartImage.DoesNotExist:
+                    return Response(
+                        {'error': 'Selected image not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                # Auto-select matching image
+                matching_image = BodyPartImage.objects.filter(
+                    user=contributor_profile.user,
+                    body_part=contest.category
+                ).order_by('created_at').first()
+                
+                if not matching_image:
+                    matching_image = BodyPartImage.objects.filter(
+                        user=contributor_profile.user
+                    ).order_by('created_at').first()
+                
+                if not matching_image:
+                    return Response(
+                        {'error': f'Contributor needs to upload a "{contest.category}" image before being added'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Create participant entry with auto_entry=True
+            participant = ContestParticipant.objects.create(
+                contest=contest,
+                contributor=contributor_profile,
+                auto_entry=True,  # Mark as auto-entered by admin
+                body_part_image=matching_image
+            )
+            
+            # Create notifications for users who favorited this contributor's images
+            self._create_favorite_notifications(contributor_profile.user, contributor_profile, contest)
+            
+            serializer = ContestParticipantSerializer(participant, context={'request': request})
+            return Response({
+                'message': f'Successfully added {contributor_profile.screen_name} to contest',
+                'participant': serializer.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            print(f"ERROR in admin_add_contributor: {str(e)}")
+            print(traceback.format_exc())
+            return Response(
+                {'error': f'An error occurred: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Get participants for a contest",
+        responses={200: ContestParticipantDetailSerializer(many=True)},
+        description="Get all participants (contributors) who joined a contest with their full attributes"
+    )
+    @decorators.action(detail=True, methods=['get'], permission_classes=[IsAuthenticated], url_path='participants')
+    def participants(self, request, pk=None):
+        """
+        Get all participants for a contest with their full contributor attributes.
+        Used by admin panel to display registered contributors.
+        """
+        try:
+            contest = self.get_object()
+            # Use select_related to eagerly load contributor and user to avoid N+1 queries
+            # Also prefetch votes for vote counts
+            participants = ContestParticipant.objects.filter(contest=contest).select_related(
+                'contributor', 'contributor__user', 'body_part_image', 'contest'
+            ).prefetch_related('votes').order_by('-joined_at')
+            
+            print(f"DEBUG: Found {participants.count()} participants for contest {contest.id}")
+            
+            # Verify we can access contributor data
+            for p in participants[:2]:  # Check first 2
+                if p.contributor:
+                    print(f"DEBUG: Participant {p.id} - Contributor {p.contributor.id} ({p.contributor.screen_name})")
+                    print(f"  Gender: {p.contributor.gender}, Age: {p.contributor.age}, Skin Tone: {p.contributor.skin_tone}")
+                else:
+                    print(f"DEBUG: Participant {p.id} - NO CONTRIBUTOR!")
+            
+            # Use detailed serializer that includes contributor attributes
+            serializer = ContestParticipantDetailSerializer(participants, many=True, context={'request': request})
+            data = serializer.data
+            
+            print(f"DEBUG: Serialized {len(data)} participants")
+            if data and len(data) > 0:
+                print(f"DEBUG: First participant keys: {list(data[0].keys())}")
+                print(f"DEBUG: First participant has 'attributes': {'attributes' in data[0]}")
+                print(f"DEBUG: First participant has 'name': {'name' in data[0]}")
+                if 'attributes' in data[0]:
+                    print(f"DEBUG: Attributes content: {data[0]['attributes']}")
+                else:
+                    print(f"DEBUG: ERROR - attributes field missing from serializer output!")
+            
+            return Response(data, status=status.HTTP_200_OK)
+        except Exception as e:
+            import traceback
+            print(f"ERROR in participants endpoint: {str(e)}")
+            print(traceback.format_exc())
+            return Response(
+                {'error': f'An error occurred: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Admin: Remove contributor from contest",
+        request={'application/json': {
+            'type': 'object',
+            'properties': {
+                'contributor_id': {
+                    'type': 'integer',
+                    'description': 'ID of the contributor to remove from this contest'
+                }
+            },
+            'required': ['contributor_id']
+        }},
+        responses={
+            200: OpenApiResponse(description="Contributor removed from contest"),
+            400: OpenApiResponse(description="Bad request"),
+            404: OpenApiResponse(description="Participant or contributor not found"),
+        },
+        description=(
+            "Admin endpoint to remove a contributor from a contest. "
+            "This deletes the corresponding ContestParticipant record, so the contributor "
+            "is no longer registered for this contest and becomes eligible again if they "
+            "still match the contest requirements."
+        )
+    )
+    @decorators.action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated],
+        url_path='admin/remove-contributor'
+    )
+    def admin_remove_contributor(self, request, pk=None):
+        """
+        Admin-only endpoint to remove a contributor from a contest.
+        Deletes the ContestParticipant entry for the given contributor/contest pair.
+        """
+        try:
+            # Verify admin permissions
+            try:
+                admin = Admin.objects.get(profile__user=request.user)
+                if not admin.is_admin:
+                    return Response(
+                        {'error': 'Only admins can remove contributors from contests'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Admin.DoesNotExist:
+                return Response(
+                    {'error': 'Only admins can remove contributors from contests'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            contest = self.get_object()
+            contributor_id = request.data.get('contributor_id')
+            
+            if not contributor_id:
+                return Response(
+                    {'error': 'contributor_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the contributor profile
+            try:
+                contributor_profile = Profile.objects.get(id=contributor_id, role='contributor')
+            except Profile.DoesNotExist:
+                return Response(
+                    {'error': 'Contributor not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Find the participant record for this contest/contributor
+            participant = ContestParticipant.objects.filter(
+                contest=contest,
+                contributor=contributor_profile
+            ).first()
+            
+            if not participant:
+                return Response(
+                    {'error': 'Participant not found for this contest and contributor'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            participant_id = participant.id
+            participant.delete()
+            
+            return Response(
+                {
+                    'message': 'Contributor removed from contest',
+                    'removed_participant_id': participant_id,
+                    'contributor_id': contributor_id,
+                    'contest_id': contest.id,
+                },
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            import traceback
+            print(f"ERROR in admin_remove_contributor: {str(e)}")
+            print(traceback.format_exc())
+            return Response(
+                {'error': f'An error occurred: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def _create_favorite_notifications(self, contributor_user, contributor_profile, contest):
         """
         Create notifications for all users who have favorited this contributor's images.
@@ -1278,6 +1639,18 @@ class ContestViewSet(viewsets.ModelViewSet):
         Check if a contributor is eligible for a contest based on attributes.
         Returns True if all contest attribute requirements are met.
         """
+        # Define available options for each category (excluding "All")
+        CATEGORY_OPTIONS = {
+            "Gender": ["Male", "Female", "Non-binary", "Other"],
+            "Age": ["18-21", "22-25", "26-29", "30-34", "35-40", "40+"],
+            "Skin Tone": ["Light", "Medium", "Dark"],
+            "Body Type": ["Petite", "Short & Curvy", "Avg/Athletic", "Tall & Slim", "Plus Size", "Short & Fit", "Short & Broad", "Tall & Fit", " BIg & Tall"],
+            "Hair Color": ["Blonde", "Brown", "Black", "Red", "Auburn", "Dirty Blonde", "Strawberry Blonde"],
+            "Shoe Size": ["<6", "6-7.5", "8-9.5", "10+", "<8.5", "8.5-10", "10.5-12.5", "13+"],
+            "Bust Size": ["A", "B", "C", "D", "AA", "DD/E", "DDD/F", ">DDD"],
+            "Penis Size": ["<4", "4-5.5", "6-7.5", "8-9.5", "10+"]
+        }
+        
         # Handle both dict and string JSON (just in case)
         contest_attrs = contest.attributes
         if isinstance(contest_attrs, str):
@@ -1297,6 +1670,18 @@ class ContestViewSet(viewsets.ModelViewSet):
             if "All" in required_values:
                 continue
             
+            # Check if all available options for this category are selected
+            # If so, treat it as "All" and skip the eligibility check
+            available_options = CATEGORY_OPTIONS.get(category, [])
+            if available_options:
+                # Convert to sets for easier comparison
+                required_set = set(required_values) if isinstance(required_values, list) else {required_values}
+                available_set = set(available_options)
+                
+                # If all available options are selected, treat as "All"
+                if required_set.issuperset(available_set):
+                    continue
+            
             # Get contributor's value for this attribute
             contributor_value = None
             
@@ -1315,6 +1700,28 @@ class ContestViewSet(viewsets.ModelViewSet):
             profile_field = attr_mapping.get(category)
             if profile_field:
                 contributor_value = getattr(profile, profile_field, None)
+            
+            # Special handling for Age: convert numeric age to age range
+            if category == "Age" and contributor_value:
+                try:
+                    age_num = int(contributor_value) if contributor_value else None
+                    if age_num:
+                        # Convert age to range format
+                        if age_num <= 21:
+                            contributor_value = "18-21"
+                        elif age_num <= 25:
+                            contributor_value = "22-25"
+                        elif age_num <= 29:
+                            contributor_value = "26-29"
+                        elif age_num <= 34:
+                            contributor_value = "30-34"
+                        elif age_num <= 40:
+                            contributor_value = "35-40"
+                        else:
+                            contributor_value = "40+"
+                except (ValueError, TypeError):
+                    # If age is not a number, try to use it as-is (might already be a range)
+                    pass
             
             # Check if contributor's value matches any of the required values
             if contributor_value and contributor_value not in required_values:
@@ -1825,6 +2232,15 @@ class VoteViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
+        # Check if contest has started
+        from django.utils import timezone
+        now = timezone.now()
+        if now < contest.start_time:
+            return Response(
+                {'error': 'Contest has not started yet. Voting will begin when the contest goes live.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Check if already voted in this contest
         if Vote.objects.filter(user=request.user, contest=contest).exists():
             return Response(
@@ -2036,7 +2452,7 @@ class VoteViewSet(viewsets.ModelViewSet):
         Returns participants ranked by total votes received.
         """
         contest_id = request.query_params.get('contest_id')
-        
+
         if not contest_id:
             return Response(
                 {'error': 'contest_id is required'},
@@ -2049,6 +2465,15 @@ class VoteViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': 'Contest not found'},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Do not reveal final results until contest has ended (if end_time is set)
+        from django.utils import timezone
+        now = timezone.now()
+        if contest.end_time and now < contest.end_time:
+            return Response(
+                {'error': 'Contest has not ended yet. Results will be available after the contest end time.'},
+                status=status.HTTP_400_BAD_REQUEST
             )
         
         # Get all participants with their vote counts
