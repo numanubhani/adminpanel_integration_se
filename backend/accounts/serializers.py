@@ -473,7 +473,7 @@ class VoteSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Vote
-        fields = ['id', 'user', 'contest', 'contest_title', 'participant', 'participant_name', 'voted_at']
+        fields = ['id', 'user', 'contest', 'contest_title', 'participant', 'participant_name', 'loser', 'consecutive_wins', 'voted_at']
         read_only_fields = ['id', 'user', 'voted_at']
 
 

@@ -2327,39 +2327,51 @@ class VoteViewSet(viewsets.ModelViewSet):
             
             contest = winner.contest
             
-            # Get the last vote for this winner to check consecutive wins
-            last_vote = Vote.objects.filter(
+            # King of the Hill logic for consecutive wins:
+            # A streak is the number of UNIQUE challengers defeated since the last loss.
+            
+            # 1. Find the most recent vote where this participant was the LOSER
+            last_loss = Vote.objects.filter(
                 contest=contest,
-                participant=winner
+                loser=winner
             ).order_by('-voted_at').first()
             
-            consecutive_wins = 1
-            if last_vote:
-                consecutive_wins = last_vote.consecutive_wins + 1
+            # 2. Count unique losers this participant has defeated since their last loss
+            wins_query = Vote.objects.filter(
+                contest=contest,
+                participant=winner
+            )
+            
+            if last_loss:
+                wins_query = wins_query.filter(voted_at__gt=last_loss.voted_at)
+            
+            unique_challengers_defeated = wins_query.values('loser').distinct().count()
+            
+            # 3. If the current loser is a NEW challenger, the streak increments
+            is_new_challenger = not wins_query.filter(loser=loser).exists()
+            consecutive_wins = unique_challengers_defeated + (1 if is_new_challenger else 0)
             
             # Create a vote record for this match result
-            # For match results, we'll use the authenticated user or skip user requirement
             from django.contrib.auth import get_user_model
             User = get_user_model()
             
-            # Try to get any valid user for system voting
             if request.user.is_authenticated:
                 system_user = request.user
             else:
-                # Get any admin or first user as system user
                 system_user = User.objects.filter(is_staff=True).first() or User.objects.first()
-                
-                if not system_user:
-                    return Response(
-                        {'error': 'No user available to record vote'},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
+            
+            if not system_user:
+                return Response(
+                    {'error': 'No user available to record vote'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
             try:
                 vote = Vote.objects.create(
                     user=system_user,
                     contest=contest,
                     participant=winner,
+                    loser=loser,  # Store the loser to track unique match wins
                     consecutive_wins=consecutive_wins
                 )
             except Exception as vote_error:

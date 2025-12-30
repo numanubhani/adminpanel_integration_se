@@ -415,6 +415,7 @@ class Vote(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="votes")
     contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name="votes")
     participant = models.ForeignKey(ContestParticipant, on_delete=models.CASCADE, related_name="votes")
+    loser = models.ForeignKey(ContestParticipant, on_delete=models.CASCADE, related_name="lost_votes", null=True, blank=True)
     voted_at = models.DateTimeField(auto_now_add=True)
     consecutive_wins = models.IntegerField(default=0)  # Track consecutive wins for a participant
 
