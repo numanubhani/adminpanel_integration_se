@@ -950,7 +950,9 @@ class ContestViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Filter contests by availability rules and other parameters.
-        Only show contests that are available for joining based on advance availability rules.
+        - Admins: See all contests
+        - Contributors: See contests available for joining (based on advance availability rules)
+        - Users/Judges: See all upcoming contests (even if not yet available for joining)
         """
         from django.utils import timezone
         from datetime import timedelta
@@ -971,17 +973,28 @@ class ContestViewSet(viewsets.ModelViewSet):
             # Admin can see all contests, including templates
             queryset = Contest.objects.all()
         else:
-            # For regular users and contributors, apply availability rules
+            # Check user role
+            try:
+                profile = self.request.user.profile
+                user_role = profile.role
+            except (Profile.DoesNotExist, AttributeError):
+                user_role = None
+            
             # Exclude recurring templates (they're not meant to be joined directly)
             queryset = queryset.filter(is_recurring_template=False)
             
-            # Apply advance availability filtering
-            available_contests = []
-            for contest in queryset:
-                if contest.is_available_for_joining():
-                    available_contests.append(contest.id)
-            
-            queryset = queryset.filter(id__in=available_contests)
+            # Different filtering for contributors vs users/judges
+            if user_role == 'contributor':
+                # Contributors: Only show contests available for joining (based on advance availability)
+                available_contests = []
+                for contest in queryset:
+                    if contest.is_available_for_joining():
+                        available_contests.append(contest.id)
+                queryset = queryset.filter(id__in=available_contests)
+            else:
+                # Users/Judges: Show all upcoming contests (haven't ended yet)
+                # They don't need to wait for advance availability - they can see what's coming
+                queryset = queryset.filter(end_time__gt=now)
         
         # Filter by active status (if explicitly requested)
         is_active = self.request.query_params.get('is_active', None)
