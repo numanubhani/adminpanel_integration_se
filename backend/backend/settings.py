@@ -137,3 +137,8 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = "hannanmalik0321@gmail.com"
 EMAIL_HOST_PASSWORD = "ptmtokcfhztuwcwg"
+
+# Yoti Age Verification Configuration
+YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID', '')
+YOTI_API_KEY = os.environ.get('YOTI_API_KEY', '')
+YOTI_API_URL = os.environ.get('YOTI_API_URL', 'https://age.yoti.com/api/v1')

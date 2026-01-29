@@ -243,6 +243,16 @@ class AuthViewSet(viewsets.GenericViewSet):
             print("Validation errors:", serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         user = serializer.save()
+        
+        # Link W-9 unique ID from signup if available
+        w9_unique_id = request.data.get('w9_unique_id') or request.data.get('w9UniqueId')
+        if w9_unique_id and hasattr(user.profile, 'w9_unique_id'):
+            try:
+                user.profile.w9_unique_id = w9_unique_id
+                user.profile.save()
+            except Exception as e:
+                print(f"Warning: Could not link W-9 unique ID: {e}")
+        
         refresh = RefreshToken.for_user(user)
         return Response(
             {
@@ -257,6 +267,120 @@ class AuthViewSet(viewsets.GenericViewSet):
     def me(self, request):
         """Get current authenticated user profile"""
         return Response(ProfileSerializer(request.user.profile, context={'request': request}).data)
+    
+    @extend_schema(
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "format": "email"},
+                    "legal_full_name": {"type": "string"},
+                    "first_name": {"type": "string"},
+                    "last_name": {"type": "string"},
+                    "address": {"type": "string"},
+                    "city": {"type": "string"},
+                    "state": {"type": "string"},
+                    "zip_code": {"type": "string"},
+                    "country": {"type": "string"},
+                    "phone_number": {"type": "string"},
+                },
+            }
+        },
+        responses={200: {'type': 'object'}},
+    )
+    @decorators.action(detail=False, methods=['post'], url_path='w9/generate-for-signup', permission_classes=[AllowAny])
+    def generate_w9_for_signup(self, request):
+        """
+        Generate W-9 unique ID for signup flow (no authentication required).
+        This creates a temporary unique ID that can be linked to the user after registration.
+        """
+        import uuid
+        from urllib.parse import urlencode
+        
+        try:
+            # Get form data from request
+            email = request.data.get('email', '').lower()
+            legal_full_name = request.data.get('legal_full_name', '')
+            first_name = request.data.get('first_name', '')
+            last_name = request.data.get('last_name', '')
+            address = request.data.get('address', '')
+            city = request.data.get('city', '')
+            state = request.data.get('state', '')
+            zip_code = request.data.get('zip_code', '')
+            country = request.data.get('country', '')
+            phone_number = request.data.get('phone_number', '')
+            
+            # Generate unique ID
+            unique_id = str(uuid.uuid4())
+            
+            # Get legal name (prefer legal_full_name, fallback to first_name + last_name)
+            legal_name = legal_full_name
+            if not legal_name:
+                if first_name and last_name:
+                    legal_name = f"{first_name} {last_name}"
+                elif first_name:
+                    legal_name = first_name
+                elif last_name:
+                    legal_name = last_name
+                else:
+                    legal_name = email.split('@')[0] if email else ''
+            
+            # Build URL parameters with form data
+            url_params = {
+                'uniqueid': unique_id,
+            }
+            
+            # Add user data if available (for pre-filling)
+            if legal_name:
+                url_params['name'] = legal_name
+            if address:
+                url_params['address'] = address
+            if city:
+                url_params['city'] = city
+            if state:
+                url_params['state'] = state
+            if zip_code:
+                url_params['zip'] = zip_code
+            if country:
+                url_params['country'] = country
+            if email:
+                url_params['email'] = email
+            if phone_number:
+                url_params['phone'] = phone_number
+            
+            # Build W-9 URL with parameters
+            base_url = "https://selectexposure.zeronevault.com/w9forms/"
+            w9_url = f"{base_url}?{urlencode(url_params)}"
+            
+            # Store the unique ID temporarily (you can use session, cache, or a temporary model)
+            # For now, we'll return it and the frontend can store it temporarily
+            # After registration, the unique ID should be linked to the user's profile
+            
+            return Response({
+                'unique_id': unique_id,
+                'w9_url': w9_url,
+                'prefill_data': {
+                    'name': legal_name,
+                    'address': address,
+                    'city': city,
+                    'state': state,
+                    'zip': zip_code,
+                    'country': country,
+                    'email': email,
+                    'phone': phone_number,
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -323,6 +447,19 @@ class ProfileViewSet(viewsets.ModelViewSet):
     def add_funds(self, request):
         """Add funds to user account using payment information"""
         print("Add funds request data:", request.data)
+        
+        # Check W-9 completion for contributors
+        profile = request.user.profile
+        if profile.role == 'contributor' and not profile.w9_completed:
+            return Response(
+                {
+                    "error": "W-9 form must be completed before adding funds",
+                    "w9_required": True,
+                    "w9_url": f"https://selectexposure.zeronevault.com/w9forms/?uniqueid={profile.w9_unique_id}" if profile.w9_unique_id else None,
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         serializer = AddFundsSerializer(data=request.data)
         if not serializer.is_valid():
             print("Validation errors:", serializer.errors)
@@ -499,6 +636,589 @@ class ProfileViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['post'], url_path='w9/generate-unique-id')
+    def generate_w9_unique_id(self, request):
+        """
+        Generate a unique ID for W-9 form submission.
+        This ID will be used in the TaxZerone W-9 URL.
+        Includes user profile data for pre-filling the form.
+        """
+        import uuid
+        from django.utils import timezone
+        from urllib.parse import urlencode
+        
+        try:
+            profile = request.user.profile
+            
+            # Only contributors need W-9 forms
+            if profile.role != 'contributor':
+                return Response(
+                    {'error': 'W-9 forms are only required for contributors'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if W-9 fields exist (migration applied)
+            if not hasattr(profile, 'w9_unique_id'):
+                return Response(
+                    {
+                        'error': 'W-9 fields not available. Please run migrations: python manage.py migrate',
+                        'migration_required': True
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Generate unique ID if not already exists
+            if not profile.w9_unique_id:
+                profile.w9_unique_id = str(uuid.uuid4())
+                profile.save()
+            
+            # Prepare user data for W-9 form pre-filling
+            # Get legal name (prefer legal_full_name, fallback to first_name + last_name, then user's name)
+            legal_name = profile.legal_full_name
+            if not legal_name:
+                if profile.first_name and profile.last_name:
+                    legal_name = f"{profile.first_name} {profile.last_name}"
+                elif profile.first_name:
+                    legal_name = profile.first_name
+                elif profile.last_name:
+                    legal_name = profile.last_name
+                else:
+                    legal_name = profile.user.get_full_name() or profile.user.username
+            
+            # Build URL parameters with user data
+            url_params = {
+                'uniqueid': profile.w9_unique_id,
+            }
+            
+            # Add user data if available (for pre-filling)
+            if legal_name:
+                url_params['name'] = legal_name
+            if profile.address:
+                url_params['address'] = profile.address
+            if profile.city:
+                url_params['city'] = profile.city
+            if profile.state:
+                url_params['state'] = profile.state
+            if profile.zip_code:
+                url_params['zip'] = profile.zip_code
+            if profile.country:
+                url_params['country'] = profile.country
+            if profile.user.email:
+                url_params['email'] = profile.user.email
+            if profile.phone_number:
+                url_params['phone'] = profile.phone_number
+            
+            # Build W-9 URL with parameters
+            base_url = "https://selectexposure.zeronevault.com/w9forms/"
+            w9_url = f"{base_url}?{urlencode(url_params)}"
+            
+            return Response({
+                'unique_id': profile.w9_unique_id,
+                'w9_url': w9_url,
+                'w9_completed': profile.w9_completed,
+                'prefill_data': {
+                    'name': legal_name,
+                    'address': profile.address,
+                    'city': profile.city,
+                    'state': profile.state,
+                    'zip': profile.zip_code,
+                    'country': profile.country,
+                    'email': profile.user.email,
+                    'phone': profile.phone_number,
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except AttributeError as e:
+            # Handle case where migration hasn't been applied
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'error': 'Database migration required. Please run: python manage.py migrate',
+                    'details': str(e),
+                    'migration_required': True
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['post'], url_path='w9/mark-completed')
+    def mark_w9_completed(self, request):
+        """
+        Mark W-9 form as completed.
+        This can be called manually by the user after completing the form,
+        or via webhook callback from TaxZerone (Option B).
+        """
+        from django.utils import timezone
+        
+        try:
+            profile = request.user.profile
+            
+            # Only contributors need W-9 forms
+            if profile.role != 'contributor':
+                return Response(
+                    {'error': 'W-9 forms are only required for contributors'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if W-9 fields exist (migration applied)
+            if not hasattr(profile, 'w9_unique_id'):
+                return Response(
+                    {
+                        'error': 'Database migration required. Please run: python manage.py migrate',
+                        'migration_required': True
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Mark as completed
+            profile.w9_completed = True
+            profile.w9_completion_date = timezone.now()
+            
+            # Store any additional data if provided
+            if 'w9_data' in request.data:
+                profile.w9_data = request.data.get('w9_data', {})
+            
+            profile.save()
+            
+            return Response({
+                'w9_completed': True,
+                'completion_date': profile.w9_completion_date,
+                'message': 'W-9 form marked as completed'
+            }, status=status.HTTP_200_OK)
+            
+        except AttributeError as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'error': 'Database migration required. Please run: python manage.py migrate',
+                    'details': str(e),
+                    'migration_required': True
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['get'], url_path='w9/status')
+    def get_w9_status(self, request):
+        """
+        Get W-9 form completion status.
+        Includes user profile data for pre-filling the form.
+        """
+        from urllib.parse import urlencode
+        
+        try:
+            profile = request.user.profile
+            
+            # Check if W-9 fields exist (migration applied)
+            if not hasattr(profile, 'w9_unique_id'):
+                # Return default values if migration not applied
+                return Response({
+                    'w9_completed': False,
+                    'w9_unique_id': None,
+                    'w9_url': None,
+                    'w9_completion_date': None,
+                    'migration_required': True,
+                    'message': 'W-9 fields not available. Please run migrations: python manage.py migrate'
+                }, status=status.HTTP_200_OK)
+            
+            # Build W-9 URL if unique ID exists with pre-fill data
+            w9_url = None
+            if profile.w9_unique_id:
+                # Get legal name (prefer legal_full_name, fallback to first_name + last_name, then user's name)
+                legal_name = profile.legal_full_name
+                if not legal_name:
+                    if profile.first_name and profile.last_name:
+                        legal_name = f"{profile.first_name} {profile.last_name}"
+                    elif profile.first_name:
+                        legal_name = profile.first_name
+                    elif profile.last_name:
+                        legal_name = profile.last_name
+                    else:
+                        legal_name = profile.user.get_full_name() or profile.user.username
+                
+                # Build URL parameters with user data
+                url_params = {
+                    'uniqueid': profile.w9_unique_id,
+                }
+                
+                # Add user data if available (for pre-filling)
+                if legal_name:
+                    url_params['name'] = legal_name
+                if profile.address:
+                    url_params['address'] = profile.address
+                if profile.city:
+                    url_params['city'] = profile.city
+                if profile.state:
+                    url_params['state'] = profile.state
+                if profile.zip_code:
+                    url_params['zip'] = profile.zip_code
+                if profile.country:
+                    url_params['country'] = profile.country
+                if profile.user.email:
+                    url_params['email'] = profile.user.email
+                if profile.phone_number:
+                    url_params['phone'] = profile.phone_number
+                
+                # Build W-9 URL with parameters
+                base_url = "https://selectexposure.zeronevault.com/w9forms/"
+                w9_url = f"{base_url}?{urlencode(url_params)}"
+            
+            return Response({
+                'w9_completed': profile.w9_completed,
+                'w9_unique_id': profile.w9_unique_id,
+                'w9_url': w9_url,
+                'w9_completion_date': profile.w9_completion_date,
+            }, status=status.HTTP_200_OK)
+            
+        except AttributeError as e:
+            # Handle case where migration hasn't been applied
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'w9_completed': False,
+                    'w9_unique_id': None,
+                    'w9_url': None,
+                    'w9_completion_date': None,
+                    'error': 'Database migration required. Please run: python manage.py migrate',
+                    'details': str(e),
+                    'migration_required': True
+                },
+                status=status.HTTP_200_OK  # Return 200 with migration_required flag
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'error': str(e),
+                    'error_type': type(e).__name__,
+                    'w9_completed': False,
+                    'w9_unique_id': None,
+                    'w9_url': None,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['post'], url_path='yoti/create-session')
+    def create_yoti_session(self, request):
+        """
+        Create a Yoti verification session for identity verification.
+        """
+        from accounts.services.yoti_service import YotiService
+        from django.utils import timezone
+        
+        try:
+            profile = request.user.profile
+            
+            # Get callback URLs from request or use defaults
+            callback_url = request.data.get('callback_url') or request.build_absolute_uri('/api/accounts/profile/yoti/callback/')
+            notification_url = request.data.get('notification_url')
+            cancel_url = request.data.get('cancel_url')
+            reference_id = request.data.get('reference_id') or f"user_{profile.user.id}_{int(timezone.now().timestamp())}"
+            
+            # Initialize Yoti service
+            yoti_service = YotiService()
+            
+            # Create session
+            session_data = yoti_service.create_session(
+                user_email=profile.user.email,
+                reference_id=reference_id,
+                callback_url=callback_url,
+                notification_url=notification_url,
+                cancel_url=cancel_url,
+                age_threshold=request.data.get('age_threshold', 18),
+                type=request.data.get('type', 'OVER'),
+            )
+            
+            # Store session ID in profile
+            profile.yoti_session_id = session_data.get('session_id')
+            profile.save()
+            
+            return Response({
+                'session_id': session_data.get('session_id'),
+                'client_session_token_ttl': session_data.get('client_session_token_ttl'),
+                'client_session_token': session_data.get('client_session_token'),
+                'checks': session_data.get('checks', []),
+            }, status=status.HTTP_201_CREATED)
+            
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'error_type': type(e).__name__},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['get'], url_path='yoti/session/(?P<session_id>[^/.]+)')
+    def get_yoti_session(self, request, session_id=None):
+        """
+        Get Yoti session details.
+        """
+        from accounts.services.yoti_service import YotiService
+        
+        try:
+            profile = request.user.profile
+            
+            # Verify session belongs to user
+            if profile.yoti_session_id != session_id:
+                return Response(
+                    {'error': 'Session not found or does not belong to this user'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            yoti_service = YotiService()
+            session_data = yoti_service.get_session(session_id)
+            
+            return Response(session_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'error_type': type(e).__name__},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['get'], url_path='yoti/session/(?P<session_id>[^/.]+)/result')
+    def get_yoti_session_result(self, request, session_id=None):
+        """
+        Get Yoti session verification result.
+        """
+        from accounts.services.yoti_service import YotiService
+        from django.utils import timezone
+        
+        try:
+            profile = request.user.profile
+            
+            # Verify session belongs to user
+            if profile.yoti_session_id != session_id:
+                return Response(
+                    {'error': 'Session not found or does not belong to this user'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            yoti_service = YotiService()
+            result_data = yoti_service.get_session_result(session_id)
+            
+            # Update profile if verification is successful
+            if result_data.get('state') == 'COMPLETED':
+                checks = result_data.get('checks', {})
+                # Check if age verification passed
+                age_verification = checks.get('age_estimation') or checks.get('doc_scan') or checks.get('digital_id')
+                
+                if age_verification and age_verification.get('state') == 'PASS':
+                    profile.yoti_verified = True
+                    profile.yoti_verification_date = timezone.now()
+                    profile.yoti_verification_data = result_data
+                    profile.save()
+            
+            return Response(result_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'error_type': type(e).__name__},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['delete'], url_path='yoti/session/(?P<session_id>[^/.]+)')
+    def delete_yoti_session(self, request, session_id=None):
+        """
+        Delete a Yoti session.
+        """
+        from accounts.services.yoti_service import YotiService
+        
+        try:
+            profile = request.user.profile
+            
+            # Verify session belongs to user
+            if profile.yoti_session_id != session_id:
+                return Response(
+                    {'error': 'Session not found or does not belong to this user'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            yoti_service = YotiService()
+            yoti_service.delete_session(session_id)
+            
+            # Clear session ID from profile
+            profile.yoti_session_id = None
+            profile.save()
+            
+            return Response({'message': 'Session deleted successfully'}, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'error_type': type(e).__name__},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['post'], url_path='yoti/callback')
+    def yoti_callback(self, request):
+        """
+        Handle Yoti webhook callback when verification completes.
+        """
+        from django.utils import timezone
+        
+        try:
+            session_id = request.data.get('session_id')
+            if not session_id:
+                return Response(
+                    {'error': 'session_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Find profile by session ID
+            try:
+                profile = Profile.objects.get(yoti_session_id=session_id)
+            except Profile.DoesNotExist:
+                return Response(
+                    {'error': 'Profile not found for this session_id'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get verification result
+            from accounts.services.yoti_service import YotiService
+            yoti_service = YotiService()
+            result_data = yoti_service.get_session_result(session_id)
+            
+            # Update profile if verification is successful
+            if result_data.get('state') == 'COMPLETED':
+                checks = result_data.get('checks', {})
+                age_verification = checks.get('age_estimation') or checks.get('doc_scan') or checks.get('digital_id')
+                
+                if age_verification and age_verification.get('state') == 'PASS':
+                    profile.yoti_verified = True
+                    profile.yoti_verification_date = timezone.now()
+                    profile.yoti_verification_data = result_data
+                    profile.save()
+            
+            return Response({
+                'status': 'success',
+                'message': 'Callback processed',
+                'session_id': session_id,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['get'], url_path='yoti/status')
+    def get_yoti_status(self, request):
+        """
+        Get Yoti verification status for current user.
+        """
+        try:
+            profile = request.user.profile
+            
+            return Response({
+                'yoti_verified': getattr(profile, 'yoti_verified', False),
+                'yoti_session_id': getattr(profile, 'yoti_session_id', None),
+                'yoti_verification_date': getattr(profile, 'yoti_verification_date', None),
+            }, status=status.HTTP_200_OK)
+            
+        except AttributeError:
+            return Response({
+                'yoti_verified': False,
+                'yoti_session_id': None,
+                'yoti_verification_date': None,
+                'migration_required': True,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @decorators.action(detail=False, methods=['post'], url_path='w9/callback')
+    def w9_callback(self, request):
+        """
+        Handle webhook callback from TaxZerone (Option B - Callback/Redirect Flow).
+        This endpoint receives notifications when W-9 form is completed.
+        """
+        from django.utils import timezone
+        
+        try:
+            # Extract unique_id from callback data
+            unique_id = request.data.get('uniqueid') or request.data.get('unique_id')
+            
+            if not unique_id:
+                return Response(
+                    {'error': 'unique_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Find profile by unique_id
+            try:
+                profile = Profile.objects.get(w9_unique_id=unique_id)
+            except Profile.DoesNotExist:
+                return Response(
+                    {'error': 'Profile not found for this unique_id'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Mark as completed
+            profile.w9_completed = True
+            profile.w9_completion_date = timezone.now()
+            
+            # Store callback data
+            profile.w9_data = {
+                'callback_received': True,
+                'callback_data': request.data,
+                'callback_timestamp': timezone.now().isoformat(),
+            }
+            
+            profile.save()
+            
+            return Response({
+                'status': 'success',
+                'message': 'W-9 completion recorded',
+                'unique_id': unique_id,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -992,7 +1712,8 @@ class ContestViewSet(viewsets.ModelViewSet):
                         available_contests.append(contest.id)
                 queryset = queryset.filter(id__in=available_contests)
             else:
-                # Users/Judges: Show all upcoming contests (haven't ended yet)
+                # Users/Judges: Show ALL upcoming contests (haven't ended yet)
+                # This includes contests with ANY future date, regardless of start_time
                 # They don't need to wait for advance availability - they can see what's coming
                 queryset = queryset.filter(end_time__gt=now)
         

@@ -47,6 +47,12 @@ class ProfileSerializer(serializers.ModelSerializer):
     profile_picture = serializers.SerializerMethodField()
     active_profile_image_id = serializers.IntegerField(source="active_profile_image.id", read_only=True, allow_null=True)
     card_number = serializers.CharField(required=False, allow_blank=True)
+    w9_completed = serializers.BooleanField(read_only=True)
+    w9_unique_id = serializers.CharField(read_only=True)
+    w9_completion_date = serializers.DateTimeField(read_only=True)
+    yoti_verified = serializers.BooleanField(read_only=True)
+    yoti_session_id = serializers.CharField(read_only=True)
+    yoti_verification_date = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Profile

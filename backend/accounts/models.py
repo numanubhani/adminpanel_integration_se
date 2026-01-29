@@ -63,6 +63,18 @@ class Profile(models.Model):
     
     # Card Details (for admin panel)
     card_number = models.CharField(max_length=20, blank=True)
+    
+    # W-9 Tax Form (TaxZerone Integration)
+    w9_unique_id = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    w9_completed = models.BooleanField(default=False)
+    w9_completion_date = models.DateTimeField(null=True, blank=True)
+    w9_data = models.JSONField(default=dict, blank=True)  # Store W-9 form data/metadata
+    
+    # Yoti Identity Verification
+    yoti_session_id = models.CharField(max_length=255, blank=True, null=True)
+    yoti_verified = models.BooleanField(default=False)
+    yoti_verification_date = models.DateTimeField(null=True, blank=True)
+    yoti_verification_data = models.JSONField(default=dict, blank=True)  # Store verification details
 
     def __str__(self) -> str:
         return f"{self.user.username} ({self.role})"
