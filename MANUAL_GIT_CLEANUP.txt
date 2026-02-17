@@ -1,0 +1,143 @@
+================================================================================
+MANUAL GIT HISTORY CLEANUP INSTRUCTIONS
+================================================================================
+
+Git is not currently available in your PATH. Follow these steps to remove
+commit 498bafe72aceb19c19f646ed8a554d66a4ca7b63 from git history.
+
+================================================================================
+STEP 1: Install Git (if not installed)
+================================================================================
+
+Download and install Git for Windows from:
+https://git-scm.com/download/win
+
+After installation, restart your terminal/PowerShell.
+
+================================================================================
+STEP 2: Install git-filter-repo
+================================================================================
+
+Open PowerShell or Command Prompt and run:
+
+    pip install git-filter-repo
+
+================================================================================
+STEP 3: Navigate to your repository
+================================================================================
+
+    cd "C:\Users\Numan\Desktop\adminpanel_integration_se"
+
+================================================================================
+STEP 4: Remove files with secrets from git history
+================================================================================
+
+Run these commands one by one:
+
+    git filter-repo --path INTEGRATION_COMPLETE_CHECKLIST.md --invert-paths --force
+    
+    git filter-repo --path TWILIO_SETUP_GUIDE.md --invert-paths --force
+    
+    git filter-repo --path-glob "*.pyc" --invert-paths --force
+    
+    git filter-repo --path-glob "__pycache__/**" --invert-paths --force
+
+================================================================================
+STEP 5: Remove settings.py from history (RECOMMENDED)
+================================================================================
+
+This removes ALL versions of settings.py from history, then re-adds the clean version:
+
+    git filter-repo --path backend/backend/settings.py --invert-paths --force
+    
+    git add backend/backend/settings.py
+    
+    git commit -m "Add cleaned settings.py without secrets"
+
+================================================================================
+STEP 6: Verify the cleanup
+================================================================================
+
+Check if commit 498bafe is gone:
+
+    git log --oneline | findstr 498bafe
+
+(Should return nothing if successfully removed)
+
+Check if secrets are gone:
+
+    git log -S "ACa1388f21d29a10993c979d411dd03da2" --all
+
+(Should return nothing)
+
+================================================================================
+STEP 7: Force push to GitHub
+================================================================================
+
+⚠️  WARNING: This rewrites history on the remote repository!
+
+    git push origin main --force
+
+OR if your branch is named differently:
+
+    git push origin master --force
+
+================================================================================
+STEP 8: Rotate Your Credentials (CRITICAL!)
+================================================================================
+
+Even after cleaning history, you MUST rotate your credentials because:
+- They may have been exposed in public commits
+- GitHub may have cached them
+- Anyone who cloned your repo before cleanup has them
+
+TWILIO:
+1. Go to: https://console.twilio.com/
+2. Navigate to: Settings → API Keys
+3. DELETE the old API key (the one that was exposed)
+4. GENERATE a new API key
+5. Update your environment variables
+
+YOTI:
+1. Go to: https://hub.yoti.com/
+2. Navigate to: Applications → Your App → API Keys
+3. REVOKE the old API key (the one that was exposed)
+4. GENERATE a new API key
+5. Update your environment variables
+
+================================================================================
+ALTERNATIVE: If git-filter-repo doesn't work
+================================================================================
+
+You can use interactive rebase to remove the specific commit:
+
+1. Find the commit before 498bafe:
+   git log --oneline
+
+2. Start interactive rebase:
+   git rebase -i 498bafe^
+
+3. In the editor, change the line with 498bafe from "pick" to "drop"
+4. Save and exit
+
+5. Force push:
+   git push origin main --force
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+If you get "git-filter-repo: command not found":
+- Make sure pip is in your PATH
+- Try: python -m pip install git-filter-repo
+- Or: py -m pip install git-filter-repo
+
+If you get permission errors:
+- Run PowerShell/CMD as Administrator
+
+If force push is rejected:
+- Make sure you have write access to the repository
+- Check if branch protection rules are enabled on GitHub
+
+================================================================================
+
