@@ -139,6 +139,17 @@ EMAIL_HOST_USER = "hannanmalik0321@gmail.com"
 EMAIL_HOST_PASSWORD = "ptmtokcfhztuwcwg"
 
 # Yoti Age Verification Configuration
-YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID', '')
-YOTI_API_KEY = os.environ.get('YOTI_API_KEY', '')
+# For production, use environment variables instead of hardcoding credentials
+YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID', 'd166a758-7100-4626-8f6f-08617879079a')
+YOTI_API_KEY = os.environ.get('YOTI_API_KEY', 'L8GLhGceggptE7W7X-mTqvq0JG9GaYq9w6Q4CjP8nob22bWyRpESm0t3NRA')
 YOTI_API_URL = os.environ.get('YOTI_API_URL', 'https://age.yoti.com/api/v1')
+# Yoti PEM file path (private key for signing requests)
+# The .pem file is saved as: backend/certs/Select-Exposure-access-security.pem
+# Also available as: backend/certs/yoti-private-key.pem (copy)
+YOTI_PEM_FILE_PATH = os.environ.get('YOTI_PEM_FILE_PATH', os.path.join(BASE_DIR, 'certs', 'Select-Exposure-access-security.pem'))
+
+# Twilio SMS Configuration
+# For production, use environment variables instead of hardcoding credentials
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'ACa1388f21d29a10993c979d411dd03da2')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', 'f11d32406cdfed890417889a9feebc47')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')  # Your Twilio phone number (e.g., +1234567890)

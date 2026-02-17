@@ -1,0 +1,11 @@
+# Ignore all certificate and key files
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+
+# But keep this directory in git
+!.gitignore
+

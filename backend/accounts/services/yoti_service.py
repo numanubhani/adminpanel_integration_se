@@ -16,21 +16,43 @@ class YotiService:
     BASE_URL = "https://age.yoti.com/api/v1"
     
     def __init__(self):
-        self.sdk_id = getattr(settings, 'YOTI_SDK_ID', os.environ.get('YOTI_SDK_ID'))
-        self.api_key = getattr(settings, 'YOTI_API_KEY', os.environ.get('YOTI_API_KEY'))
+        self.sdk_id = getattr(settings, 'YOTI_SDK_ID', os.environ.get('YOTI_SDK_ID', ''))
+        self.api_key = getattr(settings, 'YOTI_API_KEY', os.environ.get('YOTI_API_KEY', ''))
         self.api_url = getattr(settings, 'YOTI_API_URL', self.BASE_URL)
+        
+        # Strip any whitespace from credentials
+        if self.sdk_id:
+            self.sdk_id = self.sdk_id.strip()
+        if self.api_key:
+            self.api_key = self.api_key.strip()
         
         if not self.sdk_id or not self.api_key:
             logger.warning("Yoti credentials not configured. Set YOTI_SDK_ID and YOTI_API_KEY in settings.")
+        else:
+            logger.info(f"Yoti SDK ID configured: {self.sdk_id}")
+            logger.info(f"Yoti API Key configured: {self.api_key[:15]}... (length: {len(self.api_key)})")
+            
+            # Verify API key format (should be alphanumeric with dashes, typically 64+ chars)
+            if len(self.api_key) < 50:
+                logger.warning(f"API key seems too short ({len(self.api_key)} chars). Expected ~64+ characters.")
     
     def _get_headers(self, include_sdk_id=False):
         """Get headers for Yoti API requests"""
+        # Ensure API key is clean (no extra spaces, newlines, etc.)
+        api_key = self.api_key.strip() if self.api_key else ''
+        
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}',
+            'Authorization': f'Bearer {api_key}',
         }
         if include_sdk_id and self.sdk_id:
-            headers['Yoti-Sdk-Id'] = self.sdk_id
+            headers['Yoti-Sdk-Id'] = self.sdk_id.strip()
+        
+        # Log headers for debugging (without exposing full API key)
+        logger.debug(f"Yoti request headers: Content-Type={headers.get('Content-Type')}, "
+                    f"Authorization=Bearer {api_key[:15]}..., "
+                    f"Yoti-Sdk-Id={'Set (' + headers.get('Yoti-Sdk-Id', '') + ')' if headers.get('Yoti-Sdk-Id') else 'Not Set'}")
+        
         return headers
     
     def create_session(self, user_email=None, reference_id=None, callback_url=None, notification_url=None, cancel_url=None, **kwargs):
@@ -137,18 +159,39 @@ class YotiService:
             session_data["rule_id"] = kwargs["rule_id"]
         
         try:
+            headers = self._get_headers(include_sdk_id=True)
+            logger.info(f"Making request to: {self.api_url}/sessions")
+            logger.info(f"SDK ID: {self.sdk_id}")
+            logger.info(f"API Key (first 10 chars): {self.api_key[:10]}...")
+            
             response = requests.post(
                 f"{self.api_url}/sessions",
-                headers=self._get_headers(include_sdk_id=True),
+                headers=headers,
                 json=session_data,
                 timeout=30
             )
+            
+            # Log response details for debugging
+            logger.info(f"Response status: {response.status_code}")
+            logger.info(f"Response headers: {dict(response.headers)}")
+            
+            if response.status_code == 401:
+                error_detail = response.text
+                logger.error(f"Yoti authentication failed (401). Response: {error_detail}")
+                logger.error("Please verify:")
+                logger.error(f"1. API Key is correct: {self.api_key[:10]}...")
+                logger.error(f"2. SDK ID is correct: {self.sdk_id}")
+                logger.error("3. API Key is activated in Yoti dashboard")
+                logger.error("4. API Key has proper permissions for Age Verification API")
+                raise ValueError(f"Yoti authentication failed: {error_detail}. Please check your API credentials.")
+            
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Yoti session creation failed: {str(e)}")
-            if hasattr(e.response, 'text'):
-                logger.error(f"Response: {e.response.text}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response text: {e.response.text}")
             raise
     
     def get_session(self, session_id):

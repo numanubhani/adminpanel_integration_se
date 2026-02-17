@@ -313,44 +313,10 @@ class AuthViewSet(viewsets.GenericViewSet):
             # Generate unique ID
             unique_id = str(uuid.uuid4())
             
-            # Get legal name (prefer legal_full_name, fallback to first_name + last_name)
-            legal_name = legal_full_name
-            if not legal_name:
-                if first_name and last_name:
-                    legal_name = f"{first_name} {last_name}"
-                elif first_name:
-                    legal_name = first_name
-                elif last_name:
-                    legal_name = last_name
-                else:
-                    legal_name = email.split('@')[0] if email else ''
-            
-            # Build URL parameters with form data
-            url_params = {
-                'uniqueid': unique_id,
-            }
-            
-            # Add user data if available (for pre-filling)
-            if legal_name:
-                url_params['name'] = legal_name
-            if address:
-                url_params['address'] = address
-            if city:
-                url_params['city'] = city
-            if state:
-                url_params['state'] = state
-            if zip_code:
-                url_params['zip'] = zip_code
-            if country:
-                url_params['country'] = country
-            if email:
-                url_params['email'] = email
-            if phone_number:
-                url_params['phone'] = phone_number
-            
-            # Build W-9 URL with parameters
+            # Build W-9 URL with only uniqueid parameter (matching working format)
+            # Format: https://selectexposure.zeronevault.com/w9forms/?uniqueid={uuid}
             base_url = "https://selectexposure.zeronevault.com/w9forms/"
-            w9_url = f"{base_url}?{urlencode(url_params)}"
+            w9_url = f"{base_url}?uniqueid={unique_id}"
             
             # Store the unique ID temporarily (you can use session, cache, or a temporary model)
             # For now, we'll return it and the frontend can store it temporarily
@@ -359,16 +325,6 @@ class AuthViewSet(viewsets.GenericViewSet):
             return Response({
                 'unique_id': unique_id,
                 'w9_url': w9_url,
-                'prefill_data': {
-                    'name': legal_name,
-                    'address': address,
-                    'city': city,
-                    'state': state,
-                    'zip': zip_code,
-                    'country': country,
-                    'email': email,
-                    'phone': phone_number,
-                }
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -945,26 +901,42 @@ class ProfileViewSet(viewsets.ModelViewSet):
             # Initialize Yoti service
             yoti_service = YotiService()
             
+            # Verify credentials are configured
+            if not yoti_service.api_key or not yoti_service.sdk_id:
+                return Response(
+                    {'error': 'Yoti credentials not configured. Please set YOTI_API_KEY and YOTI_SDK_ID in settings.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
             # Create session
-            session_data = yoti_service.create_session(
-                user_email=profile.user.email,
-                reference_id=reference_id,
-                callback_url=callback_url,
-                notification_url=notification_url,
-                cancel_url=cancel_url,
-                age_threshold=request.data.get('age_threshold', 18),
-                type=request.data.get('type', 'OVER'),
-            )
+            try:
+                session_data = yoti_service.create_session(
+                    user_email=profile.user.email,
+                    reference_id=reference_id,
+                    callback_url=callback_url,
+                    notification_url=notification_url,
+                    cancel_url=cancel_url,
+                    age_threshold=request.data.get('age_threshold', 18),
+                    type=request.data.get('type', 'OVER'),
+                )
+            except ValueError as ve:
+                # Authentication error
+                return Response(
+                    {'error': str(ve), 'error_type': 'AuthenticationError'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
             
             # Store session ID in profile
             profile.yoti_session_id = session_data.get('session_id')
             profile.save()
             
+            from django.conf import settings
             return Response({
                 'session_id': session_data.get('session_id'),
                 'client_session_token_ttl': session_data.get('client_session_token_ttl'),
                 'client_session_token': session_data.get('client_session_token'),
                 'checks': session_data.get('checks', []),
+                'sdk_id': getattr(settings, 'YOTI_SDK_ID', ''),
             }, status=status.HTTP_201_CREATED)
             
         except ValueError as e:
@@ -2624,18 +2596,11 @@ class SmokeSignalViewSet(viewsets.ModelViewSet):
 
             # Handle SMS
             elif channel.lower() == 'sms':
-                if not TWILIO_AVAILABLE:
-                    raise RuntimeError("Twilio library not installed.")
-                account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-                auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-                twilio_from = os.getenv('TWILIO_PHONE_NUMBER')
-
-                if not all([account_sid, auth_token, twilio_from]):
-                    raise RuntimeError("Twilio credentials missing or not configured.")
-
-                client = Client(account_sid, auth_token)
-                client.messages.create(body=message, from_=twilio_from, to=to)
+                from accounts.services.twilio_service import TwilioService
+                twilio_service = TwilioService()
+                result = twilio_service.send_sms(to=to, message=message)
                 status_value = 'Delivered'
+                logger.info(f"SMS sent successfully. SID: {result.get('sid')}")
 
             else:
                 return Response(
