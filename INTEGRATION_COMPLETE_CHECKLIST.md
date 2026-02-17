@@ -97,9 +97,9 @@ This document outlines everything required to complete the Twilio and Yoti integ
    - Account status checking
 
 2. ✅ **Credentials Configured**: `backend/backend/settings.py`
-   - Account SID: `ACa1388f21d29a10993c979d411dd03da2`
-   - Auth Token: `f11d32406cdfed890417889a9feebc47`
-   - Phone Number: (needs to be set)
+   - Account SID: Set via `TWILIO_ACCOUNT_SID` environment variable
+   - Auth Token: Set via `TWILIO_AUTH_TOKEN` environment variable
+   - Phone Number: Set via `TWILIO_PHONE_NUMBER` environment variable (optional)
 
 3. ✅ **API Endpoint**: `POST /api/accounts/smoke-signals/send/`
    - Supports both Email and SMS
@@ -175,10 +175,10 @@ Decide where SMS should be used:
 
 #### 5. **Production Configuration** (Optional but Recommended)
 
-- [ ] **Move credentials to environment variables**:
+- [ ] **Set credentials as environment variables**:
   ```bash
-  export TWILIO_ACCOUNT_SID=ACa1388f21d29a10993c979d411dd03da2
-  export TWILIO_AUTH_TOKEN=f11d32406cdfed890417889a9feebc47
+  export TWILIO_ACCOUNT_SID=your_account_sid_here
+  export TWILIO_AUTH_TOKEN=your_auth_token_here
   export TWILIO_PHONE_NUMBER=+1234567890
   ```
 - [ ] **Update settings.py** to only use environment variables

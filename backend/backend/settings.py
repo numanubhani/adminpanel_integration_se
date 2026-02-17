@@ -149,7 +149,11 @@ YOTI_API_URL = os.environ.get('YOTI_API_URL', 'https://age.yoti.com/api/v1')
 YOTI_PEM_FILE_PATH = os.environ.get('YOTI_PEM_FILE_PATH', os.path.join(BASE_DIR, 'certs', 'Select-Exposure-access-security.pem'))
 
 # Twilio SMS Configuration
-# For production, use environment variables instead of hardcoding credentials
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'ACa1388f21d29a10993c979d411dd03da2')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', 'f11d32406cdfed890417889a9feebc47')
+# IMPORTANT: Set these as environment variables. Never commit secrets to git.
+# Required environment variables:
+#   - TWILIO_ACCOUNT_SID
+#   - TWILIO_AUTH_TOKEN
+#   - TWILIO_PHONE_NUMBER (optional, can be provided per request)
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')  # Your Twilio phone number (e.g., +1234567890)

@@ -2,10 +2,10 @@
 
 ## ✅ What's Been Configured
 
-1. **Twilio Credentials Added to Settings**:
-   - Account SID: `ACa1388f21d29a10993c979d411dd03da2`
-   - Auth Token: `f11d32406cdfed890417889a9feebc47`
-   - Phone Number: (needs to be set)
+1. **Twilio Credentials Configuration**:
+   - Account SID: Set via `TWILIO_ACCOUNT_SID` environment variable
+   - Auth Token: Set via `TWILIO_AUTH_TOKEN` environment variable
+   - Phone Number: Set via `TWILIO_PHONE_NUMBER` environment variable (optional)
 
 2. **TwilioService Created**: `backend/accounts/services/twilio_service.py`
    - Handles SMS sending
@@ -133,19 +133,21 @@ Twilio requires **E.164 format**:
 ### Environment Variables (Recommended for Production)
 
 ```bash
-export TWILIO_ACCOUNT_SID=ACa1388f21d29a10993c979d411dd03da2
-export TWILIO_AUTH_TOKEN=f11d32406cdfed890417889a9feebc47
+export TWILIO_ACCOUNT_SID=your_account_sid_here
+export TWILIO_AUTH_TOKEN=your_auth_token_here
 export TWILIO_PHONE_NUMBER=+1234567890
 ```
 
 ### Settings.py (Development)
 
-Currently configured in `backend/backend/settings.py`:
+Configured in `backend/backend/settings.py` to use environment variables:
 ```python
-TWILIO_ACCOUNT_SID = 'ACa1388f21d29a10993c979d411dd03da2'
-TWILIO_AUTH_TOKEN = 'f11d32406cdfed890417889a9feebc47'
-TWILIO_PHONE_NUMBER = ''  # Add your Twilio phone number here
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
 ```
+
+**Important**: Never hardcode credentials in settings.py. Always use environment variables.
 
 ## 🚨 Common Issues
 
