@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification, AgeVerification
 
 
 # ── Register (role-aware)
@@ -50,9 +50,6 @@ class ProfileSerializer(serializers.ModelSerializer):
     w9_completed = serializers.BooleanField(read_only=True)
     w9_unique_id = serializers.CharField(read_only=True)
     w9_completion_date = serializers.DateTimeField(read_only=True)
-    yoti_verified = serializers.BooleanField(read_only=True)
-    yoti_session_id = serializers.CharField(read_only=True)
-    yoti_verification_date = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Profile
@@ -858,6 +855,33 @@ class SmokeSignalSerializer(serializers.ModelSerializer):
 # ══════════════════════════════════════════════════════════════════════
 # DASHBOARD STATISTICS SERIALIZER
 # ══════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════
+# AGE VERIFICATION SERIALIZERS
+# ══════════════════════════════════════════════════════════════════════
+
+class AgeVerificationRequestSerializer(serializers.Serializer):
+    """Serializer for age verification request"""
+    token = serializers.CharField(required=True, help_text="Yoti verification token from frontend")
+
+
+class AgeVerificationResponseSerializer(serializers.Serializer):
+    """Serializer for age verification response"""
+    success = serializers.BooleanField()
+    age = serializers.IntegerField(allow_null=True)
+    is_over_18 = serializers.BooleanField()
+    date_of_birth = serializers.DateField(allow_null=True, required=False)
+    error = serializers.CharField(allow_null=True, required=False)
+
+
+class AgeVerificationSerializer(serializers.ModelSerializer):
+    """Serializer for AgeVerification model"""
+    class Meta:
+        model = AgeVerification
+        fields = ['id', 'user', 'age', 'date_of_birth', 'is_over_18', 'is_verified', 
+                  'error_message', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
+
 
 class DashboardStatsSerializer(serializers.Serializer):
     """

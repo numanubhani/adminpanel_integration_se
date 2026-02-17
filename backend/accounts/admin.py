@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote, Notification
+from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote, Notification, AgeVerification
 
 
 @admin.register(Profile)
@@ -178,6 +178,20 @@ class NotificationAdmin(admin.ModelAdmin):
     list_filter = ('notification_type', 'is_read', 'created_at')
     search_fields = ('user__username', 'user__email', 'title', 'message')
     readonly_fields = ('created_at',)
+    ordering = ('-created_at',)
+    
+    def get_user_email(self, obj):
+        return obj.user.email
+    get_user_email.short_description = "User"
+    get_user_email.admin_order_field = "user__email"
+
+
+@admin.register(AgeVerification)
+class AgeVerificationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'get_user_email', 'age', 'is_over_18', 'is_verified', 'created_at')
+    list_filter = ('is_verified', 'is_over_18', 'created_at')
+    search_fields = ('user__username', 'user__email', 'token')
+    readonly_fields = ('created_at', 'updated_at', 'verification_response')
     ordering = ('-created_at',)
     
     def get_user_email(self, obj):

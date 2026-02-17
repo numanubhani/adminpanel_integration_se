@@ -69,12 +69,6 @@ class Profile(models.Model):
     w9_completed = models.BooleanField(default=False)
     w9_completion_date = models.DateTimeField(null=True, blank=True)
     w9_data = models.JSONField(default=dict, blank=True)  # Store W-9 form data/metadata
-    
-    # Yoti Identity Verification
-    yoti_session_id = models.CharField(max_length=255, blank=True, null=True)
-    yoti_verified = models.BooleanField(default=False)
-    yoti_verification_date = models.DateTimeField(null=True, blank=True)
-    yoti_verification_data = models.JSONField(default=dict, blank=True)  # Store verification details
 
     def __str__(self) -> str:
         return f"{self.user.username} ({self.role})"
@@ -478,3 +472,31 @@ class Notification(models.Model):
     
     def __str__(self):
         return f"{self.user.username} - {self.title}"
+
+
+class AgeVerification(models.Model):
+    """
+    Model to store Yoti age verification results
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='age_verifications')
+    token = models.CharField(max_length=500, blank=True)  # Yoti verification token
+    age = models.PositiveIntegerField(null=True, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    is_over_18 = models.BooleanField(default=False)
+    is_verified = models.BooleanField(default=False)
+    verification_response = models.JSONField(default=dict, blank=True)  # Store full API response
+    error_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Age Verification"
+        verbose_name_plural = "Age Verifications"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['is_verified']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username} - Age: {self.age} - Verified: {self.is_verified}"

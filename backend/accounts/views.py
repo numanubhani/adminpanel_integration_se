@@ -14,8 +14,11 @@ from django.db import IntegrityError
 import os
 import traceback
 import json
+import logging
 
-from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification
+logger = logging.getLogger(__name__)
+
+from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification, AgeVerification
 from .serializers import (
     RegisterSerializer,
     ProfileSerializer,
@@ -36,6 +39,9 @@ from .serializers import (
     VoteSerializer,
     CastVoteSerializer,
     NotificationSerializer,
+    AgeVerificationRequestSerializer,
+    AgeVerificationResponseSerializer,
+    AgeVerificationSerializer,
 )
 
 # Optional: Twilio for SMS sending
@@ -878,267 +884,6 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     'w9_unique_id': None,
                     'w9_url': None,
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @decorators.action(detail=False, methods=['post'], url_path='yoti/create-session')
-    def create_yoti_session(self, request):
-        """
-        Create a Yoti verification session for identity verification.
-        """
-        from accounts.services.yoti_service import YotiService
-        from django.utils import timezone
-        
-        try:
-            profile = request.user.profile
-            
-            # Get callback URLs from request or use defaults
-            callback_url = request.data.get('callback_url') or request.build_absolute_uri('/api/accounts/profile/yoti/callback/')
-            notification_url = request.data.get('notification_url')
-            cancel_url = request.data.get('cancel_url')
-            reference_id = request.data.get('reference_id') or f"user_{profile.user.id}_{int(timezone.now().timestamp())}"
-            
-            # Initialize Yoti service
-            yoti_service = YotiService()
-            
-            # Verify credentials are configured
-            if not yoti_service.api_key or not yoti_service.sdk_id:
-                return Response(
-                    {'error': 'Yoti credentials not configured. Please set YOTI_API_KEY and YOTI_SDK_ID in settings.'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            # Create session
-            try:
-                session_data = yoti_service.create_session(
-                    user_email=profile.user.email,
-                    reference_id=reference_id,
-                    callback_url=callback_url,
-                    notification_url=notification_url,
-                    cancel_url=cancel_url,
-                    age_threshold=request.data.get('age_threshold', 18),
-                    type=request.data.get('type', 'OVER'),
-                )
-            except ValueError as ve:
-                # Authentication error
-                return Response(
-                    {'error': str(ve), 'error_type': 'AuthenticationError'},
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-            
-            # Store session ID in profile
-            profile.yoti_session_id = session_data.get('session_id')
-            profile.save()
-            
-            from django.conf import settings
-            return Response({
-                'session_id': session_data.get('session_id'),
-                'client_session_token_ttl': session_data.get('client_session_token_ttl'),
-                'client_session_token': session_data.get('client_session_token'),
-                'checks': session_data.get('checks', []),
-                'sdk_id': getattr(settings, 'YOTI_SDK_ID', ''),
-            }, status=status.HTTP_201_CREATED)
-            
-        except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {'error': str(e), 'error_type': type(e).__name__},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @decorators.action(detail=False, methods=['get'], url_path='yoti/session/(?P<session_id>[^/.]+)')
-    def get_yoti_session(self, request, session_id=None):
-        """
-        Get Yoti session details.
-        """
-        from accounts.services.yoti_service import YotiService
-        
-        try:
-            profile = request.user.profile
-            
-            # Verify session belongs to user
-            if profile.yoti_session_id != session_id:
-                return Response(
-                    {'error': 'Session not found or does not belong to this user'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            yoti_service = YotiService()
-            session_data = yoti_service.get_session(session_id)
-            
-            return Response(session_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {'error': str(e), 'error_type': type(e).__name__},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @decorators.action(detail=False, methods=['get'], url_path='yoti/session/(?P<session_id>[^/.]+)/result')
-    def get_yoti_session_result(self, request, session_id=None):
-        """
-        Get Yoti session verification result.
-        """
-        from accounts.services.yoti_service import YotiService
-        from django.utils import timezone
-        
-        try:
-            profile = request.user.profile
-            
-            # Verify session belongs to user
-            if profile.yoti_session_id != session_id:
-                return Response(
-                    {'error': 'Session not found or does not belong to this user'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            yoti_service = YotiService()
-            result_data = yoti_service.get_session_result(session_id)
-            
-            # Update profile if verification is successful
-            if result_data.get('state') == 'COMPLETED':
-                checks = result_data.get('checks', {})
-                # Check if age verification passed
-                age_verification = checks.get('age_estimation') or checks.get('doc_scan') or checks.get('digital_id')
-                
-                if age_verification and age_verification.get('state') == 'PASS':
-                    profile.yoti_verified = True
-                    profile.yoti_verification_date = timezone.now()
-                    profile.yoti_verification_data = result_data
-                    profile.save()
-            
-            return Response(result_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {'error': str(e), 'error_type': type(e).__name__},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @decorators.action(detail=False, methods=['delete'], url_path='yoti/session/(?P<session_id>[^/.]+)')
-    def delete_yoti_session(self, request, session_id=None):
-        """
-        Delete a Yoti session.
-        """
-        from accounts.services.yoti_service import YotiService
-        
-        try:
-            profile = request.user.profile
-            
-            # Verify session belongs to user
-            if profile.yoti_session_id != session_id:
-                return Response(
-                    {'error': 'Session not found or does not belong to this user'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            yoti_service = YotiService()
-            yoti_service.delete_session(session_id)
-            
-            # Clear session ID from profile
-            profile.yoti_session_id = None
-            profile.save()
-            
-            return Response({'message': 'Session deleted successfully'}, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {'error': str(e), 'error_type': type(e).__name__},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @decorators.action(detail=False, methods=['post'], url_path='yoti/callback')
-    def yoti_callback(self, request):
-        """
-        Handle Yoti webhook callback when verification completes.
-        """
-        from django.utils import timezone
-        
-        try:
-            session_id = request.data.get('session_id')
-            if not session_id:
-                return Response(
-                    {'error': 'session_id is required'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Find profile by session ID
-            try:
-                profile = Profile.objects.get(yoti_session_id=session_id)
-            except Profile.DoesNotExist:
-                return Response(
-                    {'error': 'Profile not found for this session_id'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Get verification result
-            from accounts.services.yoti_service import YotiService
-            yoti_service = YotiService()
-            result_data = yoti_service.get_session_result(session_id)
-            
-            # Update profile if verification is successful
-            if result_data.get('state') == 'COMPLETED':
-                checks = result_data.get('checks', {})
-                age_verification = checks.get('age_estimation') or checks.get('doc_scan') or checks.get('digital_id')
-                
-                if age_verification and age_verification.get('state') == 'PASS':
-                    profile.yoti_verified = True
-                    profile.yoti_verification_date = timezone.now()
-                    profile.yoti_verification_data = result_data
-                    profile.save()
-            
-            return Response({
-                'status': 'success',
-                'message': 'Callback processed',
-                'session_id': session_id,
-            }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @decorators.action(detail=False, methods=['get'], url_path='yoti/status')
-    def get_yoti_status(self, request):
-        """
-        Get Yoti verification status for current user.
-        """
-        try:
-            profile = request.user.profile
-            
-            return Response({
-                'yoti_verified': getattr(profile, 'yoti_verified', False),
-                'yoti_session_id': getattr(profile, 'yoti_session_id', None),
-                'yoti_verification_date': getattr(profile, 'yoti_verification_date', None),
-            }, status=status.HTTP_200_OK)
-            
-        except AttributeError:
-            return Response({
-                'yoti_verified': False,
-                'yoti_session_id': None,
-                'yoti_verification_date': None,
-                'migration_required': True,
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -3304,3 +3049,407 @@ class NotificationViewSet(viewsets.ModelViewSet):
             {'message': f'Marked {updated_count} notifications as read'},
             status=status.HTTP_200_OK
         )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# AGE VERIFICATION VIEWSET
+# ══════════════════════════════════════════════════════════════════════
+
+class AgeVerificationViewSet(viewsets.GenericViewSet):
+    """
+    ViewSet for Yoti Age Verification
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        summary="Create Yoti Verification Session",
+        description="Create a Yoti Age Verification session and get verification URL",
+        responses={
+            200: {'type': 'object', 'properties': {
+                'success': {'type': 'boolean'},
+                'session_id': {'type': 'string'},
+                'client_session_token': {'type': 'string'},
+                'verification_url': {'type': 'string'}
+            }},
+            400: OpenApiResponse(description='Bad Request'),
+            500: OpenApiResponse(description='Server Error')
+        }
+    )
+    def create_session(self, request):
+        """
+        Create a Yoti Age Verification session
+        
+        POST /api/accounts/verify-age/create-session/
+        
+        Request Body (optional):
+        {
+            "callback_url": "https://yourapp.com/callback",
+            "reference_id": "unique_reference_id"
+        }
+        
+        Response:
+        {
+            "success": true,
+            "session_id": "session_123",
+            "client_session_token": "token_abc",
+            "verification_url": "https://age.yoti.com/age-verification?clientSessionToken=..."
+        }
+        """
+        from accounts.services.yoti_age_verification import YotiAgeVerificationService
+        
+        try:
+            # Get callback URL from request or use default
+            callback_url = request.data.get('callback_url') or request.build_absolute_uri('/api/accounts/verify-age/callback/')
+            reference_id = request.data.get('reference_id') or f"user_{request.user.id}_{int(timezone.now().timestamp())}"
+            age_threshold = request.data.get('age_threshold', 18)
+            
+            # Initialize Yoti service
+            yoti_service = YotiAgeVerificationService()
+            
+            # Create session
+            result = yoti_service.create_session(
+                callback_url=callback_url,
+                reference_id=reference_id,
+                age_threshold=age_threshold
+            )
+            
+            if result.get('success'):
+                return Response({
+                    'success': True,
+                    'session_id': result.get('session_id'),
+                    'status': result.get('status'),
+                    'expires_at': result.get('expires_at'),
+                    'verification_url': result.get('verification_url'),
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    'success': False,
+                    'error': result.get('error', 'Failed to create session')
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logger.error(f"Create session error: {str(e)}")
+            return Response(
+                {
+                    'success': False,
+                    'error': f'Failed to create session: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Get Session Result",
+        description="Get the result of a Yoti Age Verification session",
+        responses={
+            200: AgeVerificationResponseSerializer,
+            400: OpenApiResponse(description='Bad Request'),
+            404: OpenApiResponse(description='Session Not Found')
+        }
+    )
+    def get_session_result(self, request, session_id=None):
+        """
+        Get the result of a Yoti Age Verification session
+        
+        GET /api/accounts/verify-age/session/{session_id}/result/
+        """
+        from accounts.services.yoti_age_verification import YotiAgeVerificationService
+        from datetime import datetime
+        
+        try:
+            yoti_service = YotiAgeVerificationService()
+            result = yoti_service.get_session_result(session_id)
+            
+            if result.get('success') and result.get('status') == 'COMPLETE':
+                # Save verification result to database
+                age_verification, created = AgeVerification.objects.get_or_create(
+                    user=request.user,
+                    defaults={
+                        'token': session_id,
+                        'age': result.get('age'),
+                        'date_of_birth': datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date() if result.get('date_of_birth') else None,
+                        'is_over_18': result.get('is_over_18', False),
+                        'is_verified': True,
+                        'verification_response': result.get('raw_response', {}),
+                    }
+                )
+                
+                if not created:
+                    # Update existing verification
+                    age_verification.age = result.get('age')
+                    if result.get('date_of_birth'):
+                        age_verification.date_of_birth = datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date()
+                    age_verification.is_over_18 = result.get('is_over_18', False)
+                    age_verification.is_verified = True
+                    age_verification.verification_response = result.get('raw_response', {})
+                    age_verification.save()
+                
+                # Update user profile age if verification successful
+                if result.get('age'):
+                    try:
+                        profile = request.user.profile
+                        profile.age = result.get('age')
+                        if result.get('date_of_birth'):
+                            profile.date_of_birth = datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date()
+                        profile.save()
+                    except Exception as e:
+                        logger.error(f"Failed to update profile age: {str(e)}")
+            
+            return Response({
+                'success': result.get('success', False),
+                'age': result.get('age'),
+                'is_over_18': result.get('is_over_18', False),
+                'date_of_birth': result.get('date_of_birth'),
+                'status': result.get('status'),
+                'error': result.get('error')
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logger.error(f"Get session result error: {str(e)}")
+            return Response(
+                {
+                    'success': False,
+                    'error': f'Failed to get session result: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Yoti Callback Handler",
+        description="Handle callback from Yoti after verification completes",
+        responses={
+            200: {'type': 'object', 'properties': {'status': {'type': 'string'}}}
+        }
+    )
+    def yoti_callback(self, request):
+        """
+        Handle callback from Yoti after verification completes
+        
+        POST /api/accounts/verify-age/callback/
+        """
+        from accounts.services.yoti_age_verification import YotiAgeVerificationService
+        from datetime import datetime
+        
+        try:
+            # Yoti sends session_id in callback
+            session_id = request.data.get('session_id') or request.data.get('sessionId')
+            
+            if not session_id:
+                return Response(
+                    {'error': 'session_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get session result
+            yoti_service = YotiAgeVerificationService()
+            result = yoti_service.get_session_result(session_id)
+            
+            # Find user by session_id (stored when session was created)
+            try:
+                age_verification = AgeVerification.objects.filter(token=session_id).first()
+                if age_verification:
+                    user = age_verification.user
+                else:
+                    return Response(
+                        {'error': 'Session not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            except:
+                return Response(
+                    {'error': 'Could not find user for this session'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            if result.get('success') and result.get('status') == 'COMPLETE':
+                # Update verification
+                age_verification.age = result.get('age')
+                if result.get('date_of_birth'):
+                    age_verification.date_of_birth = datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date()
+                age_verification.is_over_18 = result.get('is_over_18', False)
+                age_verification.is_verified = True
+                age_verification.verification_response = result.get('raw_response', {})
+                age_verification.save()
+                
+                # Update user profile
+                try:
+                    profile = user.profile
+                    profile.age = result.get('age')
+                    if result.get('date_of_birth'):
+                        profile.date_of_birth = datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date()
+                    profile.save()
+                except Exception as e:
+                    logger.error(f"Failed to update profile age: {str(e)}")
+            
+            return Response({
+                'status': 'success',
+                'message': 'Callback processed',
+                'session_id': session_id
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logger.error(f"Callback error: {str(e)}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        request=AgeVerificationRequestSerializer,
+        responses={
+            200: AgeVerificationResponseSerializer,
+            400: OpenApiResponse(description='Bad Request'),
+            500: OpenApiResponse(description='Server Error')
+        },
+        summary="Verify User Age",
+        description="Verify user age using Yoti token. Returns age and whether user is over 18."
+    )
+    def verify_age(self, request):
+        """
+        Verify age using Yoti token
+        
+        POST /api/accounts/verify-age/
+        
+        Request Body:
+        {
+            "token": "yoti_verification_token"
+        }
+        
+        Response:
+        {
+            "success": true,
+            "age": 23,
+            "is_over_18": true,
+            "date_of_birth": "2001-01-15" (optional)
+        }
+        """
+        from accounts.services.yoti_age_verification import YotiAgeVerificationService
+        from datetime import datetime
+        
+        serializer = AgeVerificationRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'error': 'Invalid request', 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        token = serializer.validated_data['token']
+        
+        try:
+            # Initialize Yoti service
+            yoti_service = YotiAgeVerificationService()
+            
+            # Verify age
+            result = yoti_service.verify_age(token)
+            
+            # Save verification result to database
+            age_verification = AgeVerification.objects.create(
+                user=request.user,
+                token=token,
+                age=result.get('age'),
+                date_of_birth=datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date() if result.get('date_of_birth') else None,
+                is_over_18=result.get('is_over_18', False),
+                is_verified=result.get('success', False),
+                verification_response=result.get('raw_response', {}),
+                error_message=result.get('error')
+            )
+            
+            # Update user profile age if verification successful
+            if result.get('success') and result.get('age'):
+                try:
+                    profile = request.user.profile
+                    profile.age = result.get('age')
+                    if result.get('date_of_birth'):
+                        profile.date_of_birth = datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date()
+                    profile.save()
+                except Exception as e:
+                    logger.error(f"Failed to update profile age: {str(e)}")
+            
+            # Return response
+            response_data = {
+                'success': result.get('success', False),
+                'age': result.get('age'),
+                'is_over_18': result.get('is_over_18', False),
+            }
+            
+            if result.get('date_of_birth'):
+                response_data['date_of_birth'] = result['date_of_birth']
+            
+            if result.get('error'):
+                response_data['error'] = result['error']
+                return Response(
+                    response_data,
+                    status=status.HTTP_400_BAD_REQUEST if not result.get('success') else status.HTTP_200_OK
+                )
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logger.error(f"Age verification error: {str(e)}")
+            
+            # Save failed verification attempt
+            try:
+                AgeVerification.objects.create(
+                    user=request.user,
+                    token=token,
+                    is_verified=False,
+                    error_message=f"Exception: {str(e)}"
+                )
+            except:
+                pass
+            
+            return Response(
+                {
+                    'success': False,
+                    'age': None,
+                    'is_over_18': False,
+                    'error': f'Verification failed: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        responses={200: AgeVerificationSerializer(many=True)},
+        summary="Get Verification History",
+        description="Get user's age verification history"
+    )
+    def verification_history(self, request):
+        """
+        Get user's age verification history
+        
+        GET /api/accounts/verify-age/history/
+        """
+        verifications = AgeVerification.objects.filter(user=request.user).order_by('-created_at')
+        serializer = AgeVerificationSerializer(verifications, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @extend_schema(
+        responses={200: AgeVerificationSerializer},
+        summary="Get Latest Verification",
+        description="Get user's latest successful age verification"
+    )
+    def latest_verification(self, request):
+        """
+        Get user's latest successful verification
+        
+        GET /api/accounts/verify-age/latest/
+        """
+        verification = AgeVerification.objects.filter(
+            user=request.user,
+            is_verified=True
+        ).order_by('-created_at').first()
+        
+        if not verification:
+            return Response(
+                {'error': 'No verification found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = AgeVerificationSerializer(verification)
+        return Response(serializer.data, status=status.HTTP_200_OK)

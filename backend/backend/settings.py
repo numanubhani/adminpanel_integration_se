@@ -8,6 +8,11 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 from pathlib import Path
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
@@ -117,6 +122,22 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Swagger Schema for Select Exposure",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SCHEMA_PATH_PREFIX": "/api/",
+    # Add JWT Bearer token authentication to Swagger UI
+    "SECURITY": [
+        {
+            "Bearer": []
+        }
+    ],
+    "SECURITY_DEFINITIONS": {
+        "Bearer": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\""
+        }
+    },
 }
 # CORS Configuration - Allow React Frontend
 CORS_ALLOWED_ORIGINS = [
@@ -138,20 +159,6 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = "hannanmalik0321@gmail.com"
 EMAIL_HOST_PASSWORD = "ptmtokcfhztuwcwg"
 
-# Yoti Age Verification Configuration
-# IMPORTANT: Set these as environment variables. Never commit secrets to git.
-# Required environment variables:
-#   - YOTI_SDK_ID
-#   - YOTI_API_KEY
-#   - YOTI_API_URL (optional, defaults to production API)
-YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID')
-YOTI_API_KEY = os.environ.get('YOTI_API_KEY')
-YOTI_API_URL = os.environ.get('YOTI_API_URL', 'https://age.yoti.com/api/v1')
-# Yoti PEM file path (private key for signing requests)
-# The .pem file is saved as: backend/certs/Select-Exposure-access-security.pem
-# Also available as: backend/certs/yoti-private-key.pem (copy)
-YOTI_PEM_FILE_PATH = os.environ.get('YOTI_PEM_FILE_PATH', os.path.join(BASE_DIR, 'certs', 'Select-Exposure-access-security.pem'))
-
 # Twilio SMS Configuration
 # IMPORTANT: Set these as environment variables. Never commit secrets to git.
 # Required environment variables:
@@ -161,3 +168,15 @@ YOTI_PEM_FILE_PATH = os.environ.get('YOTI_PEM_FILE_PATH', os.path.join(BASE_DIR,
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')  # Your Twilio phone number (e.g., +1234567890)
+
+# Yoti Age Verification Configuration
+# IMPORTANT: Set these as environment variables. Never commit secrets to git.
+# Required environment variables:
+#   - YOTI_SDK_ID: Your Yoti SDK ID (UUID)
+#   - YOTI_API_KEY: Your Yoti API Key
+#   - YOTI_PEM_FILE_PATH: Path to your .pem private key file (optional, defaults to backend/certs/Select-Exposure-access-security.pem)
+# 
+# Note: Uses RSA signing with .pem file for authentication
+YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID', 'd166a758-7100-4626-8f6f-08617879079a')
+YOTI_API_KEY = os.environ.get('YOTI_API_KEY', 'L8GLhGceggptE7W7X-mTqvq0JGGaYq9w6Q4CjP8nob22bbwyRpESm0t3NRA-')
+YOTI_PEM_FILE_PATH = os.environ.get('YOTI_PEM_FILE_PATH', os.path.join(BASE_DIR, 'certs', 'Select-Exposure-access-security.pem'))

@@ -12,6 +12,7 @@ from .views import (
     FavoriteGalleryViewSet,
     VoteViewSet,
     NotificationViewSet,
+    AgeVerificationViewSet,
 )
 
 # Create router and register all ViewSets
@@ -61,13 +62,6 @@ urlpatterns = [
     path("profile/w9/status/", ProfileViewSet.as_view({'get': 'get_w9_status'}), name='w9-status'),
     path("profile/w9/callback/", ProfileViewSet.as_view({'post': 'w9_callback'}), name='w9-callback'),
     
-    # Yoti Identity Verification endpoints
-    path("profile/yoti/create-session/", ProfileViewSet.as_view({'post': 'create_yoti_session'}), name='yoti-create-session'),
-    path("profile/yoti/session/<str:session_id>/", ProfileViewSet.as_view({'get': 'get_yoti_session', 'delete': 'delete_yoti_session'}), name='yoti-session'),
-    path("profile/yoti/session/<str:session_id>/result/", ProfileViewSet.as_view({'get': 'get_yoti_session_result'}), name='yoti-session-result'),
-    path("profile/yoti/callback/", ProfileViewSet.as_view({'post': 'yoti_callback'}), name='yoti-callback'),
-    path("profile/yoti/status/", ProfileViewSet.as_view({'get': 'get_yoti_status'}), name='yoti-status'),
-    
     # Contributor endpoints (keeping old URLs)
     path("contributor-metrics/", ProfileViewSet.as_view({'get': 'contributor_metrics'}), name='contributor-metrics'),
     path("contributors/", ProfileViewSet.as_view({'get': 'contributors_list'}), name='contributors-list'),
@@ -75,6 +69,14 @@ urlpatterns = [
     # Dashboard endpoints (keeping old URLs)
     path("dashboard/stats/", DashboardViewSet.as_view({'get': 'stats'}), name='dashboard-stats'),
     path("dashboard/top-contributors/", DashboardViewSet.as_view({'get': 'top_contributors'}), name='top-contributors'),
+    
+    # Age Verification endpoints (more specific patterns first)
+    path("verify-age/create-session/", AgeVerificationViewSet.as_view({'post': 'create_session'}), name='create-verification-session'),
+    path("verify-age/session/<str:session_id>/result/", AgeVerificationViewSet.as_view({'get': 'get_session_result'}), name='get-session-result'),
+    path("verify-age/callback/", AgeVerificationViewSet.as_view({'post': 'yoti_callback'}), name='yoti-callback'),
+    path("verify-age/history/", AgeVerificationViewSet.as_view({'get': 'verification_history'}), name='verification-history'),
+    path("verify-age/latest/", AgeVerificationViewSet.as_view({'get': 'latest_verification'}), name='latest-verification'),
+    path("verify-age/", AgeVerificationViewSet.as_view({'post': 'verify_age'}), name='verify-age'),
     
     # Contest endpoints (keeping old URLs - my-contests handled by router now)
     # The my-contests endpoint is now available at: /api/accounts/contests/my-contests/
