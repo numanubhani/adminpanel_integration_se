@@ -139,9 +139,13 @@ EMAIL_HOST_USER = "hannanmalik0321@gmail.com"
 EMAIL_HOST_PASSWORD = "ptmtokcfhztuwcwg"
 
 # Yoti Age Verification Configuration
-# For production, use environment variables instead of hardcoding credentials
-YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID', 'd166a758-7100-4626-8f6f-08617879079a')
-YOTI_API_KEY = os.environ.get('YOTI_API_KEY', 'L8GLhGceggptE7W7X-mTqvq0JG9GaYq9w6Q4CjP8nob22bWyRpESm0t3NRA')
+# IMPORTANT: Set these as environment variables. Never commit secrets to git.
+# Required environment variables:
+#   - YOTI_SDK_ID
+#   - YOTI_API_KEY
+#   - YOTI_API_URL (optional, defaults to production API)
+YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID')
+YOTI_API_KEY = os.environ.get('YOTI_API_KEY')
 YOTI_API_URL = os.environ.get('YOTI_API_URL', 'https://age.yoti.com/api/v1')
 # Yoti PEM file path (private key for signing requests)
 # The .pem file is saved as: backend/certs/Select-Exposure-access-security.pem
