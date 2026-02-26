@@ -145,9 +145,12 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3001",      # Vite default port
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
+    "http://108.61.229.67:3000",  # Production frontend (if using same server)
     "https://se-gamma-olive.vercel.app",
     "https://se-admin-panel.vercel.app",
 ]
+# For development, you can allow all origins (uncomment below if needed)
+# CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 # For development, you can also allow all origins (comment above and uncomment below)
 # CORS_ALLOW_ALL_ORIGINS = True
