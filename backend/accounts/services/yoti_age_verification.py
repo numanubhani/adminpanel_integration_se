@@ -1,17 +1,11 @@
 """
 Yoti Age Verification Service
-Handles age verification using Yoti Age Verification API with RSA signing (.pem file)
+Handles age verification using Yoti Age Verification API with Bearer token authentication
 """
 import os
 import json
-import base64
-import hashlib
-import time
 import requests
 from django.conf import settings
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.backends import default_backend
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,7 +14,7 @@ logger = logging.getLogger(__name__)
 class YotiAgeVerificationService:
     """
     Service for verifying user age using Yoti Age Verification API.
-    Uses RSA signing with .pem file for authentication.
+    Uses Bearer token authentication (OAuth 2.0 style).
     """
     
     BASE_URL = "https://age.yoti.com/api/v1"
@@ -29,11 +23,6 @@ class YotiAgeVerificationService:
     def __init__(self):
         self.sdk_id = getattr(settings, 'YOTI_SDK_ID', os.environ.get('YOTI_SDK_ID', ''))
         self.api_key = getattr(settings, 'YOTI_API_KEY', os.environ.get('YOTI_API_KEY', ''))
-        self.pem_file_path = getattr(
-            settings, 
-            'YOTI_PEM_FILE_PATH', 
-            os.environ.get('YOTI_PEM_FILE_PATH', os.path.join(settings.BASE_DIR, 'certs', 'Select-Exposure-access-security.pem'))
-        )
         
         # Trim whitespace from credentials
         if self.sdk_id:
@@ -41,81 +30,23 @@ class YotiAgeVerificationService:
         if self.api_key:
             self.api_key = str(self.api_key).strip()
         
-        # Load private key from PEM file
-        self.private_key = self._load_private_key()
-        
         if not self.sdk_id or not self.api_key:
             logger.warning("Yoti credentials not configured. Set YOTI_SDK_ID and YOTI_API_KEY in settings.")
-        if not self.private_key:
-            logger.warning(f"Yoti PEM file not found at: {self.pem_file_path}")
         else:
-            logger.info(f"Yoti service initialized - SDK ID: {self.sdk_id}, PEM file loaded: {bool(self.private_key)}")
+            logger.info(f"Yoti service initialized - SDK ID: {self.sdk_id}")
     
-    def _load_private_key(self):
-        """Load RSA private key from PEM file"""
-        try:
-            if not os.path.exists(self.pem_file_path):
-                logger.error(f"PEM file not found: {self.pem_file_path}")
-                return None
-            
-            with open(self.pem_file_path, 'rb') as pem_file:
-                private_key = serialization.load_pem_private_key(
-                    pem_file.read(),
-                    password=None,
-                    backend=default_backend()
-                )
-            logger.info(f"Successfully loaded Yoti private key from: {self.pem_file_path}")
-            return private_key
-        except Exception as e:
-            logger.error(f"Failed to load Yoti private key: {str(e)}")
-            return None
-    
-    def _sign_request(self, method, path, headers=None, body=None):
+    def _get_headers(self):
         """
-        Sign request using RSA private key (Yoti SDK method)
-        Creates a signature for the request using the private key
+        Get headers for Yoti API requests using Bearer token authentication.
+        
+        Returns:
+            dict: Headers with Authorization (Bearer token) and Yoti-SDK-Id
         """
-        if not self.private_key:
-            raise ValueError("Private key not loaded. Cannot sign request.")
-        
-        if headers is None:
-            headers = {}
-        
-        # Create string to sign
-        timestamp = str(int(time.time() * 1000))
-        nonce = os.urandom(16).hex()
-        
-        # Build signature string: method + path + timestamp + nonce + body_hash
-        signature_string = f"{method}\n{path}\n{timestamp}\n{nonce}"
-        
-        if body:
-            if isinstance(body, dict):
-                body_json = json.dumps(body, separators=(',', ':'))
-            else:
-                body_json = str(body)
-            body_hash = hashlib.sha256(body_json.encode('utf-8')).hexdigest()
-            signature_string += f"\n{body_hash}"
-        
-        # Sign with RSA private key
-        signature_bytes = self.private_key.sign(
-            signature_string.encode('utf-8'),
-            padding.PKCS1v15(),
-            hashes.SHA256()
-        )
-        
-        # Base64 encode signature
-        signature = base64.b64encode(signature_bytes).decode('utf-8')
-        
-        # Add headers
-        headers['X-Yoti-Auth-Key'] = self.api_key
-        headers['X-Yoti-SDK-Version'] = '1.0'
-        headers['X-Yoti-SDK-Id'] = self.sdk_id
-        headers['X-Yoti-Timestamp'] = timestamp
-        headers['X-Yoti-Nonce'] = nonce
-        headers['X-Yoti-Signature'] = signature
-        headers['Content-Type'] = 'application/json'
-        headers['Accept'] = 'application/json'
-        
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Content-Type': 'application/json',
+            'Yoti-SDK-Id': self.sdk_id
+        }
         return headers
     
     def create_session(self, callback_url=None, reference_id=None, age_threshold=18):
@@ -123,9 +54,9 @@ class YotiAgeVerificationService:
         Create a Yoti Age Verification session
         
         Args:
-            callback_url: URL to redirect user after verification (optional)
+            callback_url: URL to redirect user after verification (required)
             reference_id: Reference ID for tracking (optional)
-            age_threshold: Age threshold to verify (default: 18)
+            age_threshold: Age threshold to verify (default: 18, must be between 13-100)
             
         Returns:
             dict: {
@@ -137,6 +68,28 @@ class YotiAgeVerificationService:
                 'error': str or None
             }
         """
+        # Validate and convert age threshold to integer (Yoti requires integers, not strings)
+        try:
+            age_threshold_int = int(age_threshold)
+            if age_threshold_int < 13 or age_threshold_int > 100:
+                return {
+                    'success': False,
+                    'session_id': None,
+                    'status': None,
+                    'expires_at': None,
+                    'verification_url': None,
+                    'error': f'Age threshold must be between 13 and 100, got: {age_threshold_int}'
+                }
+        except (ValueError, TypeError):
+            return {
+                'success': False,
+                'session_id': None,
+                'status': None,
+                'expires_at': None,
+                'verification_url': None,
+                'error': f'Age threshold must be a valid integer, got: {age_threshold}'
+            }
+        
         if not self.sdk_id or not self.api_key:
             return {
                 'success': False,
@@ -147,85 +100,124 @@ class YotiAgeVerificationService:
                 'error': 'Yoti credentials not configured'
             }
         
-        if not self.private_key:
-            return {
-                'success': False,
-                'session_id': None,
-                'status': None,
-                'expires_at': None,
-                'verification_url': None,
-                'error': 'Yoti private key not loaded'
-            }
-        
         try:
-            # Prepare session creation request according to Yoti API docs
+            # Prepare session creation request according to Yoti Age Verification API
+            # CORRECT STRUCTURE: Use "checks" array with allowed_methods
+            # Threshold must be an integer inside checks[].config.threshold
+            # MUST include allowed_methods or Yoti will reject with E000007
             session_data = {
                 "type": "OVER",  # Check if user is OVER age threshold
                 "ttl": 900,  # 15 minutes session validity
-                "age_estimation": {
-                    "allowed": True,
-                    "threshold": age_threshold,
-                    "level": "PASSIVE",
-                    "retry_limit": 1
-                },
-                "digital_id": {
-                    "allowed": True,
-                    "threshold": age_threshold,
-                    "age_estimation_allowed": True,
-                    "age_estimation_threshold": age_threshold,
-                    "level": "NONE",
-                    "retry_limit": 1
-                },
-                "doc_scan": {
-                    "allowed": True,
-                    "threshold": age_threshold,
-                    "authenticity": "AUTO",
-                    "level": "PASSIVE",
-                    "retry_limit": 1
-                },
-                "credit_card": {
-                    "allowed": False,
-                    "threshold": age_threshold,
-                    "level": "NONE",
-                    "retry_limit": 1
-                },
-                "mobile": {
-                    "allowed": False,
-                    "level": "NONE",
-                    "retry_limit": 1
-                },
-                "retry_enabled": False,
-                "resume_enabled": False,
-                "synchronous_checks": True
+                "checks": [
+                    {
+                        "type": "AGE_VERIFICATION",
+                        "config": {
+                            "threshold": age_threshold_int,  # Must be integer, not string
+                            "allowed_methods": [
+                                "AGE_ESTIMATION",  # Face scan (fastest)
+                                "DOC_SCAN",        # Document scan
+                                "DIGITAL_ID"       # Digital ID verification
+                            ]
+                        }
+                    }
+                ]
             }
             
             # Add optional parameters
             if reference_id:
                 session_data["reference_id"] = reference_id
             
-            if callback_url:
-                session_data["callback"] = {
-                    "auto": True,
-                    "url": callback_url
-                }
+            # Yoti REQUIRES a callback URL - it must be HTTPS
+            # Always include callback since Yoti requires it
+            if not callback_url:
+                raise ValueError("Callback URL is required by Yoti API")
             
-            # Sign the request
-            path = "/api/v1/sessions"
-            method = "POST"
-            headers = self._sign_request(method, path, body=session_data)
+            session_data["callback"] = {
+                "auto": True,
+                "url": callback_url
+            }
+            
+            # Get headers with Bearer token authentication
+            headers = self._get_headers()
+            
+            # Verify threshold is integer (critical for Yoti API)
+            threshold_value = session_data["checks"][0]["config"]["threshold"]
+            if not isinstance(threshold_value, int):
+                logger.error(f"Threshold is not int: {type(threshold_value)}, converting...")
+                session_data["checks"][0]["config"]["threshold"] = int(threshold_value)
+            
+            logger.info(f"Yoti threshold type: {type(session_data['checks'][0]['config']['threshold']).__name__}, value: {session_data['checks'][0]['config']['threshold']}")
+            
+            # Log the exact request we're sending (for debugging)
+            # json.dumps will show integers without quotes (e.g., 18 not "18")
+            request_body_json = json.dumps(session_data, indent=2)
+            logger.info(f"Yoti create session - Request body: {request_body_json}")
+            logger.info(f"Yoti create session - Age threshold: {age_threshold_int} (type: {type(age_threshold_int).__name__})")
+            logger.info(f"Yoti create session - Using checks array structure with AGE_VERIFICATION type")
             
             # Make API call to create session
+            # Using json= parameter ensures proper JSON serialization with integer types preserved
             url = f"{self.BASE_URL}/sessions"
             response = requests.post(
                 url,
                 headers=headers,
-                json=session_data,
+                json=session_data,  # This will serialize with integers preserved
                 timeout=30
             )
             
             logger.info(f"Yoti create session response status: {response.status_code}")
             logger.debug(f"Yoti create session request URL: {url}")
+            logger.debug(f"Yoti create session request headers: {headers}")
+            logger.debug(f"Yoti create session request body: {request_body_json}")
             logger.debug(f"Yoti create session response: {response.text}")
+            
+            # Handle 400 specifically (Bad Request - validation errors)
+            if response.status_code == 400:
+                error_msg = "400 Bad Request - Invalid request parameters"
+                error_details = None
+                logger.error(error_msg)
+                try:
+                    error_data = response.json()
+                    logger.error(f"Yoti API error details: {error_data}")
+                    error_details = error_data
+                    # Try to extract a more specific error message
+                    if isinstance(error_data, dict):
+                        # Check for different error formats
+                        if 'message' in error_data:
+                            error_msg = error_data.get('message')
+                        elif 'error' in error_data:
+                            error_msg = error_data.get('error')
+                        elif 'code' in error_data:
+                            error_msg = f"{error_data.get('code', 'VALIDATION_ERROR')}"
+                        
+                        # Add errors array if present
+                        if 'errors' in error_data:
+                            errors_list = error_data['errors']
+                            if isinstance(errors_list, list) and len(errors_list) > 0:
+                                error_messages = []
+                                for err in errors_list:
+                                    if isinstance(err, dict):
+                                        prop = err.get('property', '')
+                                        msg = err.get('message', '')
+                                        error_messages.append(f"{prop}: {msg}" if prop else msg)
+                                    else:
+                                        error_messages.append(str(err))
+                                error_msg += f" - {'; '.join(error_messages)}"
+                except Exception as e:
+                    logger.error(f"Yoti API error response (non-JSON): {response.text}")
+                    logger.error(f"Error parsing response: {str(e)}")
+                    error_msg = f"400 Bad Request: {response.text[:500]}"
+                    error_details = {'raw_response': response.text}
+                return {
+                    'success': False,
+                    'session_id': None,
+                    'status': None,
+                    'expires_at': None,
+                    'verification_url': None,
+                    'error': error_msg,
+                    'error_details': error_details,
+                    'raw_response': response.text if error_details is None else None
+                }
             
             # Handle 401 specifically (Missing or unknown SDK ID)
             if response.status_code == 401:
@@ -246,9 +238,9 @@ class YotiAgeVerificationService:
                     'error': error_msg
                 }
             
-            # Handle 403 specifically (Incorrect API key or signature)
+            # Handle 403 specifically (Incorrect API key)
             if response.status_code == 403:
-                error_msg = "403 Forbidden - Incorrect API key or signature. Please verify your YOTI_API_KEY and PEM file in the Yoti dashboard."
+                error_msg = "403 Forbidden - Incorrect API key. Please verify your YOTI_API_KEY in the Yoti dashboard."
                 logger.error(error_msg)
                 try:
                     error_data = response.json()
@@ -304,16 +296,6 @@ class YotiAgeVerificationService:
                     'error': error_msg
                 }
                 
-        except ValueError as e:
-            logger.error(f"Yoti signing error: {str(e)}")
-            return {
-                'success': False,
-                'session_id': None,
-                'status': None,
-                'expires_at': None,
-                'verification_url': None,
-                'error': f'Signing error: {str(e)}'
-            }
         except requests.exceptions.Timeout:
             logger.error("Yoti API request timeout")
             return {
@@ -374,16 +356,6 @@ class YotiAgeVerificationService:
                 'error': 'Yoti credentials not configured'
             }
         
-        if not self.private_key:
-            return {
-                'success': False,
-                'age': None,
-                'is_over_18': False,
-                'date_of_birth': None,
-                'status': None,
-                'error': 'Yoti private key not loaded'
-            }
-        
         if not session_id:
             return {
                 'success': False,
@@ -395,10 +367,8 @@ class YotiAgeVerificationService:
             }
         
         try:
-            # Sign the request
-            path = f"/api/v1/sessions/{session_id}/result"
-            method = "GET"
-            headers = self._sign_request(method, path)
+            # Get headers with Bearer token authentication
+            headers = self._get_headers()
             
             # Make API call to get session result
             url = f"{self.BASE_URL}/sessions/{session_id}/result"
@@ -487,16 +457,6 @@ class YotiAgeVerificationService:
                     'error': error_msg
                 }
                 
-        except ValueError as e:
-            logger.error(f"Yoti signing error: {str(e)}")
-            return {
-                'success': False,
-                'age': None,
-                'is_over_18': False,
-                'date_of_birth': None,
-                'status': None,
-                'error': f'Signing error: {str(e)}'
-            }
         except requests.exceptions.Timeout:
             logger.error("Yoti API request timeout")
             return {

@@ -173,10 +173,15 @@ TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')  # Your Twilio p
 # IMPORTANT: Set these as environment variables. Never commit secrets to git.
 # Required environment variables:
 #   - YOTI_SDK_ID: Your Yoti SDK ID (UUID)
-#   - YOTI_API_KEY: Your Yoti API Key
-#   - YOTI_PEM_FILE_PATH: Path to your .pem private key file (optional, defaults to backend/certs/Select-Exposure-access-security.pem)
+#   - YOTI_API_KEY: Your Yoti API Key (Bearer token)
+#   - YOTI_CALLBACK_URL: HTTPS callback URL (required by Yoti, must be HTTPS)
+#     For development, use ngrok or similar: https://your-ngrok-url.ngrok.io/api/accounts/verify-age/callback/
+#     For production, use your actual HTTPS callback URL
 # 
-# Note: Uses RSA signing with .pem file for authentication
+# Note: Uses Bearer token authentication (OAuth 2.0 style)
+# The API key should be sent as: Authorization: Bearer {API_KEY}
+# The SDK ID should be sent as: Yoti-SDK-Id: {SDK_ID}
 YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID', 'd166a758-7100-4626-8f6f-08617879079a')
-YOTI_API_KEY = os.environ.get('YOTI_API_KEY', 'L8GLhGceggptE7W7X-mTqvq0JGGaYq9w6Q4CjP8nob22bbwyRpESm0t3NRA-')
-YOTI_PEM_FILE_PATH = os.environ.get('YOTI_PEM_FILE_PATH', os.path.join(BASE_DIR, 'certs', 'Select-Exposure-access-security.pem'))
+YOTI_API_KEY = os.environ.get('YOTI_API_KEY', 'L8GLhGceggptE7W7X-mTqvqOJG9GaYq9w6Q4CjP8nob22bWyRpESm0t3NRA=')
+# Default to a placeholder - MUST be set to a valid HTTPS URL in production
+YOTI_CALLBACK_URL = os.environ.get('YOTI_CALLBACK_URL', 'https://example.com/yoti-callback')

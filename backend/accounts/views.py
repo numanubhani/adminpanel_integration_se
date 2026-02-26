@@ -3098,17 +3098,50 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
         from accounts.services.yoti_age_verification import YotiAgeVerificationService
         
         try:
-            # Get callback URL from request or use default
-            callback_url = request.data.get('callback_url') or request.build_absolute_uri('/api/accounts/verify-age/callback/')
+            # Get callback URL from request or settings
+            # Yoti REQUIRES a callback URL and it must be HTTPS
+            # For development, you can use a service like ngrok or webhook.site
+            # For production, use your actual HTTPS callback URL
+            callback_url = request.data.get('callback_url')
+            
+            # If not provided, try to get from settings or use a default
+            if not callback_url:
+                from django.conf import settings
+                callback_url = getattr(settings, 'YOTI_CALLBACK_URL', None)
+            
+            # If still no callback URL, use a placeholder HTTPS URL
+            # Note: This won't work for actual callbacks, but Yoti requires it for validation
+            # For production, you MUST set YOTI_CALLBACK_URL in settings or provide it in the request
+            if not callback_url:
+                # Use a placeholder - in production, replace with your actual HTTPS callback URL
+                callback_url = 'https://example.com/yoti-callback'
+                logger.warning("Using placeholder callback URL. Set YOTI_CALLBACK_URL in settings for production.")
+            
+            # Validate callback URL format
+            if not callback_url.startswith('https://'):
+                return Response({
+                    'success': False,
+                    'error': 'Callback URL must be HTTPS. Yoti requires a valid HTTPS callback URL.',
+                    'hint': 'For development, use a service like ngrok or set YOTI_CALLBACK_URL in settings'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Warn if using localhost (won't work but won't fail validation)
+            if 'localhost' in callback_url or '127.0.0.1' in callback_url:
+                logger.warning(f"Callback URL contains localhost - Yoti may not be able to reach it: {callback_url}")
+            
             reference_id = request.data.get('reference_id') or f"user_{request.user.id}_{int(timezone.now().timestamp())}"
-            age_threshold = request.data.get('age_threshold', 18)
+            # Ensure age_threshold is an integer
+            try:
+                age_threshold = int(request.data.get('age_threshold', 18))
+            except (ValueError, TypeError):
+                age_threshold = 18
             
             # Initialize Yoti service
             yoti_service = YotiAgeVerificationService()
             
-            # Create session
+            # Create session (callback_url is optional - we use polling instead)
             result = yoti_service.create_session(
-                callback_url=callback_url,
+                callback_url=callback_url,  # None if not provided or invalid
                 reference_id=reference_id,
                 age_threshold=age_threshold
             )
@@ -3122,10 +3155,24 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
                     'verification_url': result.get('verification_url'),
                 }, status=status.HTTP_201_CREATED)
             else:
-                return Response({
+                error_message = result.get('error', 'Failed to create session')
+                error_details = result.get('error_details')
+                raw_response = result.get('raw_response')
+                logger.error(f"Yoti create session failed: {error_message}")
+                logger.error(f"Full result: {result}")
+                
+                response_data = {
                     'success': False,
-                    'error': result.get('error', 'Failed to create session')
-                }, status=status.HTTP_400_BAD_REQUEST)
+                    'error': error_message,
+                }
+                
+                # Include detailed error information for debugging
+                if error_details:
+                    response_data['error_details'] = error_details
+                if raw_response:
+                    response_data['raw_response'] = raw_response
+                    
+                return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
                 
         except Exception as e:
             import traceback
@@ -3439,6 +3486,7 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
         Get user's latest successful verification
         
         GET /api/accounts/verify-age/latest/
+        Returns 200 with null data if no verification found (instead of 404)
         """
         verification = AgeVerification.objects.filter(
             user=request.user,
@@ -3447,8 +3495,14 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
         
         if not verification:
             return Response(
-                {'error': 'No verification found'},
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    'is_verified': False,
+                    'age': None,
+                    'is_over_18': False,
+                    'date_of_birth': None,
+                    'message': 'No verification found'
+                },
+                status=status.HTTP_200_OK
             )
         
         serializer = AgeVerificationSerializer(verification)
