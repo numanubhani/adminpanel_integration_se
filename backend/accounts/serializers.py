@@ -3,41 +3,33 @@ from django.conf import settings
 from rest_framework import serializers
 from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification, AgeVerification
 import boto3
-from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
 
 
 def _generate_presigned_url(key: str, expires_in: int = 3600) -> str | None:
     """
     Generate a temporary signed URL for a private Wasabi object.
-    Falls back to None if anything goes wrong so callers can decide
-    how to handle it.
     """
     try:
-        # Only attempt if Wasabi/S3 settings are available
-        bucket = getattr(settings, "AWS_STORAGE_BUCKET_NAME", None)
-        endpoint = getattr(settings, "AWS_S3_ENDPOINT_URL", None)
-        access_key = getattr(settings, "AWS_ACCESS_KEY_ID", None)
-        secret_key = getattr(settings, "AWS_SECRET_ACCESS_KEY", None)
-
-        if not bucket or not endpoint or not access_key or not secret_key or not key:
+        if not key:
             return None
 
-        s3_client = boto3.client(
+        s3 = boto3.client(
             "s3",
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            endpoint_url=endpoint,
-            region_name=getattr(settings, "AWS_S3_REGION_NAME", None),
-            config=Config(signature_version=getattr(settings, "AWS_S3_SIGNATURE_VERSION", "s3v4")),
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+            region_name=settings.AWS_S3_REGION_NAME,
         )
 
-        return s3_client.generate_presigned_url(
+        return s3.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
+            Params={
+                "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
+                "Key": key,
+            },
             ExpiresIn=expires_in,
         )
-    except (BotoCoreError, ClientError, Exception):
+    except Exception:
         return None
 
 
