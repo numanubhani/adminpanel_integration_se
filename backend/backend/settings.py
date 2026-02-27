@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     "drf_spectacular",
+    "storages",
     # Local apps
     "accounts",
     "dashboard",
@@ -96,12 +97,46 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
-# Static files (CSS, JavaScript, Images)
+# Static & Media files
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
+
 STATIC_URL = "static/"
-# Media files settings
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
+
+# Default: use local media in development, Wasabi in production if configured
+USE_WASABI_STORAGE = os.environ.get("USE_WASABI_STORAGE", "true").lower() == "true"
+
+if USE_WASABI_STORAGE:
+    # Wasabi (S3-compatible) settings
+    WASABI_ACCESS_KEY_ID = os.environ.get("WASABI_ACCESS_KEY_ID")
+    WASABI_SECRET_ACCESS_KEY = os.environ.get("WASABI_SECRET_ACCESS_KEY")
+    WASABI_BUCKET_NAME = os.environ.get("WASABI_BUCKET_NAME", "se-media")
+    WASABI_REGION = os.environ.get("WASABI_REGION", "eu-central-1")
+    WASABI_ENDPOINT_URL = os.environ.get(
+        "WASABI_ENDPOINT_URL",
+        "https://s3.eu-central-1.wasabisys.com",
+    )
+
+    AWS_ACCESS_KEY_ID = WASABI_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY = WASABI_SECRET_ACCESS_KEY
+    AWS_STORAGE_BUCKET_NAME = WASABI_BUCKET_NAME
+    AWS_S3_ENDPOINT_URL = WASABI_ENDPOINT_URL
+    AWS_S3_REGION_NAME = WASABI_REGION
+
+    # S3/Wasabi behavior
+    AWS_S3_SIGNATURE_VERSION = "s3v4"
+    AWS_S3_ADDRESSING_STYLE = "virtual"  # or "path" if you prefer
+    AWS_DEFAULT_ACL = None
+    AWS_S3_FILE_OVERWRITE = False
+
+    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+
+    # Media URLs served directly from Wasabi
+    MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/"
+    MEDIA_ROOT = ""
+else:
+    # Fallback to local media (e.g. for local dev)
+    MEDIA_URL = "/media/"
+    MEDIA_ROOT = os.path.join(BASE_DIR, "media/")
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
