@@ -140,20 +140,22 @@ SPECTACULAR_SETTINGS = {
     },
 }
 # CORS Configuration - Allow React Frontend
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:3001",      # Vite default port
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    "http://108.61.229.67:3000",  # Production frontend (if using same server)
-    "https://se-gamma-olive.vercel.app",
-    "https://se-admin-panel.vercel.app",
-]
-# For development, you can allow all origins (uncomment below if needed)
-# CORS_ALLOW_ALL_ORIGINS = True
+# For production with HTTPS frontend (Vercel) calling HTTP backend, we need to allow all origins
+# This is necessary because browsers block mixed content (HTTPS -> HTTP)
+# In a proper production setup, the backend should also use HTTPS
+CORS_ALLOW_ALL_ORIGINS = True  # Enabled for Vercel HTTPS -> HTTP backend compatibility
 CORS_ALLOW_CREDENTIALS = True
-# For development, you can also allow all origins (comment above and uncomment below)
-# CORS_ALLOW_ALL_ORIGINS = True
+
+# Alternative: If you prefer to whitelist specific origins only, use this instead:
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:3000",
+#     "http://localhost:3001",
+#     "http://127.0.0.1:3000",
+#     "http://127.0.0.1:3001",
+#     "http://108.61.229.67:3000",
+#     "https://se-gamma-olive.vercel.app",
+#     "https://se-admin-panel.vercel.app",
+# ]
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.gmail.com"
