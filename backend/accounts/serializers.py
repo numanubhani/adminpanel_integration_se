@@ -1,6 +1,44 @@
 from django.contrib.auth.models import User
+from django.conf import settings
 from rest_framework import serializers
 from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification, AgeVerification
+import boto3
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
+
+
+def _generate_presigned_url(key: str, expires_in: int = 3600) -> str | None:
+    """
+    Generate a temporary signed URL for a private Wasabi object.
+    Falls back to None if anything goes wrong so callers can decide
+    how to handle it.
+    """
+    try:
+        # Only attempt if Wasabi/S3 settings are available
+        bucket = getattr(settings, "AWS_STORAGE_BUCKET_NAME", None)
+        endpoint = getattr(settings, "AWS_S3_ENDPOINT_URL", None)
+        access_key = getattr(settings, "AWS_ACCESS_KEY_ID", None)
+        secret_key = getattr(settings, "AWS_SECRET_ACCESS_KEY", None)
+
+        if not bucket or not endpoint or not access_key or not secret_key or not key:
+            return None
+
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            endpoint_url=endpoint,
+            region_name=getattr(settings, "AWS_S3_REGION_NAME", None),
+            config=Config(signature_version=getattr(settings, "AWS_S3_SIGNATURE_VERSION", "s3v4")),
+        )
+
+        return s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+    except (BotoCoreError, ClientError, Exception):
+        return None
 
 
 # ── Register (role-aware)
@@ -57,13 +95,22 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ("role",)
     
     def get_profile_picture(self, obj):
-        """Return full URL for profile picture"""
-        if obj.profile_picture:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.profile_picture.url)
-            return obj.profile_picture.url
-        return None
+        """Return full (possibly signed) URL for profile picture"""
+        if not obj.profile_picture:
+            return None
+
+        # When using Wasabi/private media, generate a presigned URL
+        if getattr(settings, "USE_WASABI_STORAGE", False):
+            key = obj.profile_picture.name  # e.g. "profile_pictures/xyz.png"
+            signed = _generate_presigned_url(key)
+            if signed:
+                return signed
+
+        # Fallback to regular URL (e.g. local dev)
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.profile_picture.url)
+        return obj.profile_picture.url
 
     def update(self, instance, validated_data):
         # nested user (email)
@@ -367,13 +414,20 @@ class BodyPartImageSerializer(serializers.ModelSerializer):
         fields = ["id", "body_part", "image", "image_url", "created_at", "is_in_contest"]
     
     def get_image_url(self, obj):
-        """Return full URL for the image"""
-        if obj.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.image.url)
-            return obj.image.url
-        return None
+        """Return full (possibly signed) URL for the image"""
+        if not obj.image:
+            return None
+
+        if getattr(settings, "USE_WASABI_STORAGE", False):
+            key = obj.image.name  # storage key inside bucket
+            signed = _generate_presigned_url(key)
+            if signed:
+                return signed
+
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url
     
     def get_is_in_contest(self, obj):
         """Check if this image is being used in any active contest"""
@@ -408,13 +462,20 @@ class FavoriteImageSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
     
     def get_image_url(self, obj):
-        """Return full URL for the favorited image"""
-        if obj.body_part_image.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.body_part_image.image.url)
-            return obj.body_part_image.image.url
-        return None
+        """Return full (possibly signed) URL for the favorited image"""
+        if not obj.body_part_image.image:
+            return None
+
+        if getattr(settings, "USE_WASABI_STORAGE", False):
+            key = obj.body_part_image.image.name
+            signed = _generate_presigned_url(key)
+            if signed:
+                return signed
+
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.body_part_image.image.url)
+        return obj.body_part_image.image.url
     
     def get_contributor_screen_name(self, obj):
         """Return contributor's screen name if available"""
