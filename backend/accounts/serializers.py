@@ -53,14 +53,50 @@ def _generate_presigned_url(key: str, expires_in: int = 3600) -> str | None:
         return None
 
 
+def _wasabi_upload_file(key: str, file_like, content_type: str = None) -> bool:
+    """
+    Upload file to Wasabi using boto3 put_object only (no HeadObject).
+    Use this when the API key has PutObject but not HeadObject (avoids 403 on server).
+    Returns True on success, False on failure.
+    """
+    if not key or not getattr(settings, "AWS_ACCESS_KEY_ID", None) or not getattr(settings, "AWS_SECRET_ACCESS_KEY", None):
+        return False
+    try:
+        config = Config(signature_version="s3v4", s3={"addressing_style": "path"})
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+            region_name=settings.AWS_S3_REGION_NAME,
+            config=config,
+        )
+        file_like.seek(0)
+        extra = {}
+        if content_type:
+            extra["ContentType"] = content_type
+        s3.put_object(
+            Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+            Key=key,
+            Body=file_like.read(),
+            **extra,
+        )
+        return True
+    except Exception as e:
+        logger.warning("Wasabi direct put_object failed key=%s: %s", key, e)
+        return False
+
+
 def _wasabi_object_exists(key: str) -> bool:
-    """Return True if the object exists. Uses default_storage so we check the same backend that saved the file."""
+    """Return True if the object exists. On 403 (e.g. no HeadObject permission), returns True to avoid false error logs after direct put_object."""
     if not key:
         return False
     try:
         from django.core.files.storage import default_storage
         return default_storage.exists(key)
-    except Exception:
+    except Exception as e:
+        if getattr(e, "response", {}).get("Error", {}).get("Code") == "403":
+            return True  # assume exists when we can't check (e.g. server key has PutObject but not HeadObject)
         return False
 
 
@@ -168,20 +204,17 @@ class ProfileSerializer(serializers.ModelSerializer):
         if request and 'profile_picture' in request.FILES:
             file = request.FILES['profile_picture']
             if use_wasabi:
-                # Upload via default_storage (same path as wasabi_test_upload) so file
-                # actually reaches Wasabi; assigning UploadedFile to FileField then save()
-                # can fail to persist with django-storages.
+                # Direct put_object avoids HeadObject (403 when key lacks ListBucket/HeadObject on server)
                 file.seek(0)
                 ext = (os.path.splitext(file.name or "")[1] or ".png").lower()
                 if not ext.startswith("."):
                     ext = "." + ext
                 key = f"profile_pictures/{instance.user_id}_{uuid.uuid4().hex}{ext}"
-                try:
-                    saved_name = default_storage.save(key, file)
-                    instance.profile_picture.name = saved_name
-                except Exception as e:
-                    logger.exception("Wasabi upload failed for key=%s: %s", key, e)
-                    raise
+                ct = getattr(file, "content_type", None) or "image/png"
+                if _wasabi_upload_file(key, file, content_type=ct):
+                    instance.profile_picture.name = key
+                else:
+                    raise serializers.ValidationError({"profile_picture": "Failed to upload image to storage."})
             else:
                 instance.profile_picture = file
 
@@ -195,8 +228,11 @@ class ProfileSerializer(serializers.ModelSerializer):
                 if not ext:
                     ext = ".bin"
                 key = f"id_documents/{instance.user_id}_{uuid.uuid4().hex}{ext}"
-                default_storage.save(key, file)
-                instance.id_document.name = key
+                ct = getattr(file, "content_type", None) or "application/octet-stream"
+                if _wasabi_upload_file(key, file, content_type=ct):
+                    instance.id_document.name = key
+                else:
+                    raise serializers.ValidationError({"id_document": "Failed to upload file to storage."})
             else:
                 instance.id_document = file
 
@@ -219,8 +255,8 @@ class ProfileSerializer(serializers.ModelSerializer):
                         ext = "." + ext
                     if use_wasabi:
                         key = f"profile_pictures/{instance.user_id}_{uuid.uuid4().hex}{ext}"
-                        default_storage.save(key, ContentFile(image_content))
-                        instance.profile_picture.name = key
+                        if _wasabi_upload_file(key, ContentFile(image_content), content_type="image/png"):
+                            instance.profile_picture.name = key
                     else:
                         instance.profile_picture.save(
                             original_filename,
