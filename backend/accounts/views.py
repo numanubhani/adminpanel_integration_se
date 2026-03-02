@@ -19,6 +19,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .models import BodyPartImage, Contest, ContestParticipant, Admin, Profile, Payment, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification, AgeVerification
+from .serializers import _generate_presigned_url
 from .serializers import (
     RegisterSerializer,
     ProfileSerializer,
@@ -50,6 +51,19 @@ try:
     TWILIO_AVAILABLE = True
 except Exception:
     TWILIO_AVAILABLE = False
+
+
+def _media_url(request, file_field):
+    """Return presigned URL for Wasabi media, else absolute URL. Never return raw bucket URL (403)."""
+    if not file_field:
+        return None
+    if getattr(settings, "USE_WASABI_STORAGE", False) and getattr(file_field, "name", None):
+        url = _generate_presigned_url(file_field.name)
+        if url:
+            return url
+    if request:
+        return request.build_absolute_uri(file_field.url)
+    return file_field.url
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -384,12 +398,15 @@ class ProfileViewSet(viewsets.ModelViewSet):
     
     @decorators.action(detail=False, methods=['put', 'patch'], url_path='update-profile')
     def update_my_profile(self, request):
-        """Update current user's profile"""
+        """Update current user's profile. After save, re-serialize so profile_picture/id_document return presigned URLs."""
+        if request.FILES.get("profile_picture"):
+            logger.info("Profile upload: received profile_picture (%s bytes)", request.FILES["profile_picture"].size)
         profile = request.user.profile
         serializer = ProfileSerializer(profile, data=request.data, partial=True, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        profile.refresh_from_db()
+        return Response(ProfileSerializer(profile, context={'request': request}).data)
     
     @extend_schema(
         request=AddFundsSerializer,
@@ -525,7 +542,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     
                     photo_galleries[category].append({
                         'id': img.id,
-                        'image_url': request.build_absolute_uri(img.image.url) if img.image else None,
+                        'image_url': _media_url(request, img.image) if img.image else None,
                         'created_at': img.created_at.isoformat() if img.created_at else None,
                         'is_in_contest': is_in_contest
                     })
@@ -537,10 +554,10 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 # For now, we'll use a placeholder
                 contests_won = 0  # TODO: Calculate based on vote counts/rankings
                 
-                # Get profile picture URL
+                # Get profile picture URL (presigned when using Wasabi)
                 profile_pic_url = None
                 if profile.profile_picture:
-                    profile_pic_url = request.build_absolute_uri(profile.profile_picture.url)
+                    profile_pic_url = _media_url(request, profile.profile_picture)
                 
                 # Count total images
                 total_images = body_part_images.count()
@@ -1298,12 +1315,12 @@ class DashboardViewSet(viewsets.GenericViewSet):
                 total_galleries = 7
                 galleries_completed = f"{unique_body_parts} of {total_galleries}"
                 
-                # Get profile picture or ID document for avatar
+                # Get profile picture or ID document for avatar (presigned when using Wasabi)
                 avatar_url = None
                 if profile.profile_picture:
-                    avatar_url = request.build_absolute_uri(profile.profile_picture.url)
+                    avatar_url = _media_url(request, profile.profile_picture)
                 elif profile.id_document:
-                    avatar_url = request.build_absolute_uri(profile.id_document.url)
+                    avatar_url = _media_url(request, profile.id_document)
                 
                 top_contributors_data.append({
                     'id': profile.id,
@@ -1647,7 +1664,7 @@ class ContestViewSet(viewsets.ModelViewSet):
             # Add image info only for contributors
             if matching_image:
                 response_data['body_part_image_id'] = matching_image.id
-                response_data['body_part_image_url'] = request.build_absolute_uri(matching_image.image.url) if matching_image.image else None
+                response_data['body_part_image_url'] = _media_url(request, matching_image.image) if matching_image.image else None
             
             return Response(response_data, status=status.HTTP_201_CREATED)
         
@@ -1737,7 +1754,7 @@ class ContestViewSet(viewsets.ModelViewSet):
                 'message': 'Successfully changed contest image',
                 'contest_id': contest.id,
                 'body_part_image_id': new_image.id,
-                'body_part_image_url': request.build_absolute_uri(new_image.image.url) if new_image.image else None,
+                'body_part_image_url': _media_url(request, new_image.image) if new_image.image else None,
                 'participant': serializer.data
             }, status=status.HTTP_200_OK)
             
@@ -2886,7 +2903,7 @@ class VoteViewSet(viewsets.ModelViewSet):
                 'contributor_name': participant.contributor.screen_name or participant.contributor.user.username,
                 'contributor_id': participant.contributor.id,
                 'body_part_image_id': participant.body_part_image.id if participant.body_part_image else None,
-                'image_url': request.build_absolute_uri(participant.body_part_image.image.url) if participant.body_part_image and participant.body_part_image.image else None,
+                'image_url': _media_url(request, participant.body_part_image.image) if participant.body_part_image and participant.body_part_image.image else None,
                 'votes_count': participant.votes.count(),
                 'joined_at': participant.joined_at.isoformat()
             })
@@ -2955,7 +2972,7 @@ class VoteViewSet(viewsets.ModelViewSet):
                 'participant_id': participant.id,
                 'screen_name': participant.contributor.screen_name or participant.contributor.user.username,
                 'contributor_id': participant.contributor.id,
-                'image_url': request.build_absolute_uri(participant.body_part_image.image.url) if participant.body_part_image and participant.body_part_image.image else None,
+                'image_url': _media_url(request, participant.body_part_image.image) if participant.body_part_image and participant.body_part_image.image else None,
                 'total_votes': participant.total_votes,
                 'voters': voter_names,
                 'joined_at': participant.joined_at.isoformat()

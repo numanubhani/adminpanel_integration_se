@@ -1,27 +1,44 @@
+import logging
+import os
+import uuid
+
 from django.contrib.auth.models import User
 from django.conf import settings
+from django.core.files.storage import default_storage
 from rest_framework import serializers
 from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification, AgeVerification
 import boto3
+from botocore.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_presigned_url(key: str, expires_in: int = 3600) -> str | None:
     """
     Generate a temporary signed URL for a private Wasabi object.
+    Uses path-style and s3v4 (Wasabi-recommended) to avoid 403.
     """
     try:
         if not key:
             return None
+        if not getattr(settings, "AWS_ACCESS_KEY_ID", None) or not getattr(settings, "AWS_SECRET_ACCESS_KEY", None):
+            return None
 
+        # Wasabi recommends path-style for presigned URLs to avoid 403/SignatureDoesNotMatch
+        config = Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+        )
         s3 = boto3.client(
             "s3",
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             endpoint_url=settings.AWS_S3_ENDPOINT_URL,
             region_name=settings.AWS_S3_REGION_NAME,
+            config=config,
         )
 
-        return s3.generate_presigned_url(
+        url = s3.generate_presigned_url(
             "get_object",
             Params={
                 "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
@@ -29,8 +46,22 @@ def _generate_presigned_url(key: str, expires_in: int = 3600) -> str | None:
             },
             ExpiresIn=expires_in,
         )
-    except Exception:
+        return url
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Wasabi presigned URL failed: %s", e)
         return None
+
+
+def _wasabi_object_exists(key: str) -> bool:
+    """Return True if the object exists. Uses default_storage so we check the same backend that saved the file."""
+    if not key:
+        return False
+    try:
+        from django.core.files.storage import default_storage
+        return default_storage.exists(key)
+    except Exception:
+        return False
 
 
 # ── Register (role-aware)
@@ -75,6 +106,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     screen_name = serializers.CharField(required=False, max_length=17)
     password = serializers.CharField(write_only=True, required=False)
     profile_picture = serializers.SerializerMethodField()
+    id_document = serializers.SerializerMethodField()
     active_profile_image_id = serializers.IntegerField(source="active_profile_image.id", read_only=True, allow_null=True)
     card_number = serializers.CharField(required=False, allow_blank=True)
     w9_completed = serializers.BooleanField(read_only=True)
@@ -87,22 +119,33 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ("role",)
     
     def get_profile_picture(self, obj):
-        """Return full (possibly signed) URL for profile picture"""
+        """Return full (possibly signed) URL for profile picture. Never return raw bucket URL when using Wasabi."""
         if not obj.profile_picture:
             return None
 
-        # When using Wasabi/private media, generate a presigned URL
+        # When using Wasabi/private media, only return presigned URL (never raw URL — causes 403)
         if getattr(settings, "USE_WASABI_STORAGE", False):
             key = obj.profile_picture.name  # e.g. "profile_pictures/xyz.png"
             signed = _generate_presigned_url(key)
-            if signed:
-                return signed
+            return signed  # None if signing failed; do not fall back to raw URL
 
-        # Fallback to regular URL (e.g. local dev)
+        # Local / non-Wasabi: relative or absolute URL
         request = self.context.get("request")
         if request:
             return request.build_absolute_uri(obj.profile_picture.url)
         return obj.profile_picture.url
+
+    def get_id_document(self, obj):
+        """Return presigned URL for id_document when using Wasabi; never raw bucket URL."""
+        if not obj.id_document:
+            return None
+        if getattr(settings, "USE_WASABI_STORAGE", False):
+            signed = _generate_presigned_url(obj.id_document.name)
+            return signed
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.id_document.url)
+        return obj.id_document.url
 
     def update(self, instance, validated_data):
         # nested user (email)
@@ -119,47 +162,91 @@ class ProfileSerializer(serializers.ModelSerializer):
             instance.user.set_password(password)
             instance.user.save()
 
-        # Handle profile_picture from request.FILES if present
+        # Handle profile_picture and id_document from request.FILES if present
         request = self.context.get('request')
+        use_wasabi = getattr(settings, "USE_WASABI_STORAGE", False)
         if request and 'profile_picture' in request.FILES:
-            instance.profile_picture = request.FILES['profile_picture']
-        
+            file = request.FILES['profile_picture']
+            if use_wasabi:
+                # Upload via default_storage (same path as wasabi_test_upload) so file
+                # actually reaches Wasabi; assigning UploadedFile to FileField then save()
+                # can fail to persist with django-storages.
+                file.seek(0)
+                ext = (os.path.splitext(file.name or "")[1] or ".png").lower()
+                if not ext.startswith("."):
+                    ext = "." + ext
+                key = f"profile_pictures/{instance.user_id}_{uuid.uuid4().hex}{ext}"
+                try:
+                    saved_name = default_storage.save(key, file)
+                    instance.profile_picture.name = saved_name
+                except Exception as e:
+                    logger.exception("Wasabi upload failed for key=%s: %s", key, e)
+                    raise
+            else:
+                instance.profile_picture = file
+
+        if request and 'id_document' in request.FILES:
+            file = request.FILES['id_document']
+            if use_wasabi:
+                file.seek(0)
+                ext = (os.path.splitext(file.name or "")[1] or "").lower() or ""
+                if ext and not ext.startswith("."):
+                    ext = "." + ext
+                if not ext:
+                    ext = ".bin"
+                key = f"id_documents/{instance.user_id}_{uuid.uuid4().hex}{ext}"
+                default_storage.save(key, file)
+                instance.id_document.name = key
+            else:
+                instance.id_document = file
+
         # Handle setting profile picture from existing gallery image
         if request and 'profile_picture_from_gallery' in request.data:
-            from .models import BodyPartImage
             from django.core.files.base import ContentFile
-            import os
-            
+
             try:
                 body_part_image_id = int(request.data.get('profile_picture_from_gallery'))
                 body_part_image = BodyPartImage.objects.get(
                     id=body_part_image_id,
                     user=request.user
                 )
-                
-                # Track which gallery image is the active profile picture
                 instance.active_profile_image = body_part_image
-                
-                # Copy the image file to profile_picture
                 if body_part_image.image:
-                    # Read the image content
                     image_content = body_part_image.image.read()
-                    # Get original filename
                     original_filename = os.path.basename(body_part_image.image.name)
-                    # Save to profile_picture field
-                    instance.profile_picture.save(
-                        original_filename,
-                        ContentFile(image_content),
-                        save=False
-                    )
+                    ext = (os.path.splitext(original_filename)[1] or ".png").lower()
+                    if not ext.startswith("."):
+                        ext = "." + ext
+                    if use_wasabi:
+                        key = f"profile_pictures/{instance.user_id}_{uuid.uuid4().hex}{ext}"
+                        default_storage.save(key, ContentFile(image_content))
+                        instance.profile_picture.name = key
+                    else:
+                        instance.profile_picture.save(
+                            original_filename,
+                            ContentFile(image_content),
+                            save=False,
+                        )
             except (BodyPartImage.DoesNotExist, ValueError):
-                pass  # Silently fail if image not found
+                pass
 
         # profile fields (incl. id_document via multipart)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
         instance.save()
+
+        # Verify Wasabi upload: if we have a profile_picture key but object is missing, log it
+        if use_wasabi and instance.profile_picture:
+            key = instance.profile_picture.name
+            if not _wasabi_object_exists(key):
+                logger.error(
+                    "Wasabi 404: profile_picture not found after save. bucket=%s key=%s. "
+                    "Check WASABI_BUCKET_NAME and that the access key has PutObject on this bucket.",
+                    getattr(settings, "AWS_STORAGE_BUCKET_NAME", ""),
+                    key,
+                )
+
         return instance
 
 
@@ -275,6 +362,7 @@ class ContributorRegisterSerializer(serializers.Serializer):
 class ContributorProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", required=False)
     password = serializers.CharField(write_only=True, required=False)
+    id_document = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
@@ -318,6 +406,17 @@ class ContributorProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ("role",)
 
+    def get_id_document(self, obj):
+        """Return presigned URL for id_document when using Wasabi."""
+        if not obj.id_document:
+            return None
+        if getattr(settings, "USE_WASABI_STORAGE", False):
+            return _generate_presigned_url(obj.id_document.name)
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.id_document.url)
+        return obj.id_document.url
+
     def update(self, instance, validated_data):
         # nested user (email)
         user_data = validated_data.pop("user", {})
@@ -333,7 +432,12 @@ class ContributorProfileSerializer(serializers.ModelSerializer):
             instance.user.set_password(password)
             instance.user.save()
 
-        # all contributor profile fields (incl. id_document via multipart)
+        # id_document from multipart upload
+        request = self.context.get("request")
+        if request and "id_document" in request.FILES:
+            instance.id_document = request.FILES["id_document"]
+
+        # all other contributor profile fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
@@ -406,15 +510,13 @@ class BodyPartImageSerializer(serializers.ModelSerializer):
         fields = ["id", "body_part", "image", "image_url", "created_at", "is_in_contest"]
     
     def get_image_url(self, obj):
-        """Return full (possibly signed) URL for the image"""
+        """Return full (possibly signed) URL for the image. Never raw bucket URL when using Wasabi."""
         if not obj.image:
             return None
 
         if getattr(settings, "USE_WASABI_STORAGE", False):
-            key = obj.image.name  # storage key inside bucket
-            signed = _generate_presigned_url(key)
-            if signed:
-                return signed
+            signed = _generate_presigned_url(obj.image.name)
+            return signed  # None if signing failed; do not expose raw URL
 
         request = self.context.get("request")
         if request:
@@ -454,15 +556,13 @@ class FavoriteImageSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
     
     def get_image_url(self, obj):
-        """Return full (possibly signed) URL for the favorited image"""
+        """Return full (possibly signed) URL for the favorited image. Never raw bucket URL when using Wasabi."""
         if not obj.body_part_image.image:
             return None
 
         if getattr(settings, "USE_WASABI_STORAGE", False):
-            key = obj.body_part_image.image.name
-            signed = _generate_presigned_url(key)
-            if signed:
-                return signed
+            signed = _generate_presigned_url(obj.body_part_image.image.name)
+            return signed  # None if signing failed; do not expose raw URL
 
         request = self.context.get("request")
         if request:
@@ -699,13 +799,15 @@ class ContestParticipantSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'joined_at', 'body_part_image', 'votes_count']
     
     def get_body_part_image_url(self, obj):
-        """Return full URL for the body part image"""
-        if obj.body_part_image and obj.body_part_image.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.body_part_image.image.url)
-            return obj.body_part_image.image.url
-        return None
+        """Return full URL for the body part image (presigned when using Wasabi)."""
+        if not obj.body_part_image or not obj.body_part_image.image:
+            return None
+        if getattr(settings, "USE_WASABI_STORAGE", False):
+            return _generate_presigned_url(obj.body_part_image.image.name)
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.body_part_image.image.url)
+        return obj.body_part_image.image.url
     
     def get_votes_count(self, obj):
         """Return the total number of votes for this participant"""
@@ -737,13 +839,15 @@ class ContestParticipantDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'joined_at', 'body_part_image', 'votes_count', 'attributes']
     
     def get_body_part_image_url(self, obj):
-        """Return full URL for the body part image"""
-        if obj.body_part_image and obj.body_part_image.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.body_part_image.image.url)
-            return obj.body_part_image.image.url
-        return None
+        """Return full URL for the body part image (presigned when using Wasabi)."""
+        if not obj.body_part_image or not obj.body_part_image.image:
+            return None
+        if getattr(settings, "USE_WASABI_STORAGE", False):
+            return _generate_presigned_url(obj.body_part_image.image.name)
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.body_part_image.image.url)
+        return obj.body_part_image.image.url
     
     def get_votes_count(self, obj):
         """Return the total number of votes for this participant"""

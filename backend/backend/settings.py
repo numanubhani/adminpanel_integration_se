@@ -8,13 +8,17 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 from pathlib import Path
 import os
+import re
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+# Load environment variables from backend/.env
+_load_env = Path(BASE_DIR) / ".env"
+if _load_env.exists():
+    load_dotenv(dotenv_path=_load_env)
+else:
+    load_dotenv()
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 # SECURITY WARNING: keep the secret key used in production secret!
@@ -106,15 +110,25 @@ STATIC_URL = "static/"
 USE_WASABI_STORAGE = os.environ.get("USE_WASABI_STORAGE", "true").lower() == "true"
 
 if USE_WASABI_STORAGE:
-    # Wasabi (S3-compatible) settings
-    WASABI_ACCESS_KEY_ID = os.environ.get("WASABI_ACCESS_KEY_ID")
-    WASABI_SECRET_ACCESS_KEY = os.environ.get("WASABI_SECRET_ACCESS_KEY")
-    WASABI_BUCKET_NAME = os.environ.get("WASABI_BUCKET_NAME", "se-media")
-    WASABI_REGION = os.environ.get("WASABI_REGION", "eu-central-1")
-    WASABI_ENDPOINT_URL = os.environ.get(
-        "WASABI_ENDPOINT_URL",
-        "https://s3.eu-central-1.wasabisys.com",
+    # Wasabi (S3-compatible) settings — load from .env (WASABI_ACCESS_KEY_ID, WASABI_SECRET_ACCESS_KEY)
+    WASABI_ACCESS_KEY_ID = os.environ.get("WASABI_ACCESS_KEY_ID", "").strip()
+    WASABI_SECRET_ACCESS_KEY = os.environ.get("WASABI_SECRET_ACCESS_KEY", "").strip()
+    WASABI_BUCKET_NAME = os.environ.get("WASABI_BUCKET_NAME", "se-media").strip()
+    _region_raw = os.environ.get("WASABI_REGION", "eu-central-1").strip()
+    # boto3 expects short region code (e.g. eu-central-1), not "Amsterdam eu-central-1"
+    _region_match = re.search(r"[a-z]{2}-[a-z]+-\d+", _region_raw)
+    WASABI_REGION = _region_match.group(0) if _region_match else _region_raw or "eu-central-1"
+    WASABI_ENDPOINT_URL = (
+        os.environ.get("WASABI_ENDPOINT_URL", "").strip()
+        or "https://s3.eu-central-1.wasabisys.com"
     )
+
+    if not WASABI_ACCESS_KEY_ID or not WASABI_SECRET_ACCESS_KEY:
+        import warnings
+        warnings.warn(
+            "USE_WASABI_STORAGE is True but WASABI_ACCESS_KEY_ID or WASABI_SECRET_ACCESS_KEY is missing in .env. "
+            "Set them in backend/.env and restart the server."
+        )
 
     AWS_ACCESS_KEY_ID = WASABI_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY = WASABI_SECRET_ACCESS_KEY
@@ -122,13 +136,21 @@ if USE_WASABI_STORAGE:
     AWS_S3_ENDPOINT_URL = WASABI_ENDPOINT_URL
     AWS_S3_REGION_NAME = WASABI_REGION
 
-    # S3/Wasabi behavior
+    # S3/Wasabi behavior (path-style required for Wasabi compatibility)
     AWS_S3_SIGNATURE_VERSION = "s3v4"
-    AWS_S3_ADDRESSING_STYLE = "virtual"  # or "path" if you prefer
+    AWS_S3_ADDRESSING_STYLE = "path"
     AWS_DEFAULT_ACL = None
     AWS_S3_FILE_OVERWRITE = False
 
-    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+    # Django 5.1+ ignores DEFAULT_FILE_STORAGE; must use STORAGES or files go to local disk
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
 
     # Media URLs served directly from Wasabi
     MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/"
@@ -137,6 +159,14 @@ else:
     # Fallback to local media (e.g. for local dev)
     MEDIA_URL = "/media/"
     MEDIA_ROOT = os.path.join(BASE_DIR, "media/")
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
