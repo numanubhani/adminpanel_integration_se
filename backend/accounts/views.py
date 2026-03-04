@@ -2,6 +2,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password
 from django.core.mail import send_mail
 from django.conf import settings
+from django.http import HttpResponse
 from rest_framework import status, permissions, viewsets, decorators
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -564,10 +565,18 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 # Count filled categories (excluding "All photos" and "Profile picture")
                 filled_categories = len(photo_galleries.keys())
                 
+                # Legal name: prefer legal_full_name, then first + last, then user full name
+                legal_name = profile.legal_full_name or ""
+                if not legal_name and (profile.first_name or profile.last_name):
+                    legal_name = f"{profile.first_name or ''} {profile.last_name or ''}".strip()
+                if not legal_name:
+                    legal_name = profile.user.get_full_name() or profile.user.username or ""
+
                 contributor_dict = {
                     'id': profile.id,
                     'screen_name': profile.screen_name or profile.user.email,
                     'name': profile.screen_name or profile.user.email,
+                    'legal_full_name': legal_name,
                     'email': profile.user.email,
                     'gender': profile.gender or 'Unknown',
                     'age': profile.age,
@@ -3077,6 +3086,15 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
     ViewSet for Yoti Age Verification
     """
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        """
+        Allow anonymous access for Yoti callback (used by Yoti redirect/webhook),
+        require authentication for all other age verification actions.
+        """
+        if self.action == "yoti_callback":
+            return [AllowAny()]
+        return [permission() for permission in self.permission_classes]
     
     @extend_schema(
         summary="Create Yoti Verification Session",
@@ -3126,13 +3144,14 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
                 from django.conf import settings
                 callback_url = getattr(settings, 'YOTI_CALLBACK_URL', None)
             
-            # If still no callback URL, use a placeholder HTTPS URL
-            # Note: This won't work for actual callbacks, but Yoti requires it for validation
-            # For production, you MUST set YOTI_CALLBACK_URL in settings or provide it in the request
+            # If still no callback URL, use this backend's callback URL so redirect shows our success page (no 404)
             if not callback_url:
-                # Use a placeholder - in production, replace with your actual HTTPS callback URL
-                callback_url = 'https://example.com/yoti-callback'
-                logger.warning("Using placeholder callback URL. Set YOTI_CALLBACK_URL in settings for production.")
+                callback_url = request.build_absolute_uri('/api/accounts/verify-age/callback/')
+                if not callback_url.startswith('https://'):
+                    callback_url = getattr(settings, 'YOTI_CALLBACK_URL', None) or callback_url
+                    logger.warning("Yoti requires HTTPS callback. Using: %s", callback_url)
+                else:
+                    logger.info("Using backend callback URL: %s", callback_url)
             
             # Validate callback URL format
             if not callback_url.startswith('https://'):
@@ -3290,13 +3309,25 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
     )
     def yoti_callback(self, request):
         """
-        Handle callback from Yoti after verification completes
-        
-        POST /api/accounts/verify-age/callback/
+        Handle callback from Yoti after verification completes.
+        GET: Yoti redirects the user here after verification; return a success page (avoids 404).
+        POST: Optional webhook/API callback with session_id in body.
         """
+        # GET = browser redirect from Yoti; return HTML so the popup doesn't show 404
+        if request.method == 'GET':
+            html = """
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8"><title>Verification complete</title></head>
+            <body style="font-family:sans-serif;text-align:center;padding:2rem;">
+            <p>Verification complete. You can close this window.</p>
+            <script>setTimeout(function(){ window.close(); }, 2000);</script>
+            </body></html>
+            """
+            return HttpResponse(html, content_type='text/html')
+
         from accounts.services.yoti_age_verification import YotiAgeVerificationService
         from datetime import datetime
-        
+
         try:
             # Yoti sends session_id in callback
             session_id = request.data.get('session_id') or request.data.get('sessionId')

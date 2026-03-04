@@ -53,14 +53,17 @@ def _generate_presigned_url(key: str, expires_in: int = 3600) -> str | None:
         return None
 
 
-def _wasabi_upload_file(key: str, file_like, content_type: str = None) -> bool:
+def _wasabi_upload_file(key: str, file_like, content_type: str = None):
     """
     Upload file to Wasabi using boto3 put_object only (no HeadObject).
-    Use this when the API key has PutObject but not HeadObject (avoids 403 on server).
-    Returns True on success, False on failure.
+    Returns (True, None) on success, (False, error_message) on failure.
     """
-    if not key or not getattr(settings, "AWS_ACCESS_KEY_ID", None) or not getattr(settings, "AWS_SECRET_ACCESS_KEY", None):
-        return False
+    if not key:
+        return False, "No storage key"
+    ak = getattr(settings, "AWS_ACCESS_KEY_ID", None) or ""
+    sk = getattr(settings, "AWS_SECRET_ACCESS_KEY", None) or ""
+    if not ak or not sk:
+        return False, "Wasabi credentials not set (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env)"
     try:
         config = Config(signature_version="s3v4", s3={"addressing_style": "path"})
         s3 = boto3.client(
@@ -81,10 +84,11 @@ def _wasabi_upload_file(key: str, file_like, content_type: str = None) -> bool:
             Body=file_like.read(),
             **extra,
         )
-        return True
+        return True, None
     except Exception as e:
-        logger.warning("Wasabi direct put_object failed key=%s: %s", key, e)
-        return False
+        err = str(e)
+        logger.exception("Wasabi put_object failed key=%s: %s", key, e)
+        return False, err
 
 
 def _wasabi_object_exists(key: str) -> bool:
@@ -105,7 +109,7 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=("contributor", "user"))
-    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=17)
+    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=20)
 
     def validate_email(self, value):
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
@@ -139,7 +143,7 @@ class RegisterSerializer(serializers.Serializer):
 class ProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", required=False)
     username = serializers.CharField(source="user.username", read_only=True)
-    screen_name = serializers.CharField(required=False, max_length=17)
+    screen_name = serializers.CharField(required=False, max_length=20)
     password = serializers.CharField(write_only=True, required=False)
     profile_picture = serializers.SerializerMethodField()
     id_document = serializers.SerializerMethodField()
@@ -211,10 +215,11 @@ class ProfileSerializer(serializers.ModelSerializer):
                     ext = "." + ext
                 key = f"profile_pictures/{instance.user_id}_{uuid.uuid4().hex}{ext}"
                 ct = getattr(file, "content_type", None) or "image/png"
-                if _wasabi_upload_file(key, file, content_type=ct):
+                ok, err = _wasabi_upload_file(key, file, content_type=ct)
+                if ok:
                     instance.profile_picture.name = key
                 else:
-                    raise serializers.ValidationError({"profile_picture": "Failed to upload image to storage."})
+                    raise serializers.ValidationError({"profile_picture": f"Failed to upload image: {err}"})
             else:
                 instance.profile_picture = file
 
@@ -229,10 +234,11 @@ class ProfileSerializer(serializers.ModelSerializer):
                     ext = ".bin"
                 key = f"id_documents/{instance.user_id}_{uuid.uuid4().hex}{ext}"
                 ct = getattr(file, "content_type", None) or "application/octet-stream"
-                if _wasabi_upload_file(key, file, content_type=ct):
+                ok, err = _wasabi_upload_file(key, file, content_type=ct)
+                if ok:
                     instance.id_document.name = key
                 else:
-                    raise serializers.ValidationError({"id_document": "Failed to upload file to storage."})
+                    raise serializers.ValidationError({"id_document": f"Failed to upload file: {err}"})
             else:
                 instance.id_document = file
 
@@ -255,7 +261,8 @@ class ProfileSerializer(serializers.ModelSerializer):
                         ext = "." + ext
                     if use_wasabi:
                         key = f"profile_pictures/{instance.user_id}_{uuid.uuid4().hex}{ext}"
-                        if _wasabi_upload_file(key, ContentFile(image_content), content_type="image/png"):
+                        ok, _ = _wasabi_upload_file(key, ContentFile(image_content), content_type="image/png")
+                        if ok:
                             instance.profile_picture.name = key
                     else:
                         instance.profile_picture.save(
@@ -290,7 +297,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 class UserRegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=17)
+    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=20)
 
     def validate_email(self, value):
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
@@ -324,7 +331,7 @@ class ContributorRegisterSerializer(serializers.Serializer):
     # Core account
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=17)
+    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=20)
     legalFullName = serializers.CharField(source="legal_full_name", required=False, allow_blank=True)
     allowNameInSearch = serializers.BooleanField(source="allow_name_in_search", required=False)
     creatorPathway = serializers.CharField(source="creator_pathway", required=False, allow_blank=True)

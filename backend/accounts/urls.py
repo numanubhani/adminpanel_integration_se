@@ -73,7 +73,7 @@ urlpatterns = [
     # Age Verification endpoints (more specific patterns first)
     path("verify-age/create-session/", AgeVerificationViewSet.as_view({'post': 'create_session'}), name='create-verification-session'),
     path("verify-age/session/<str:session_id>/result/", AgeVerificationViewSet.as_view({'get': 'get_session_result'}), name='get-session-result'),
-    path("verify-age/callback/", AgeVerificationViewSet.as_view({'post': 'yoti_callback'}), name='yoti-callback'),
+    path("verify-age/callback/", AgeVerificationViewSet.as_view({'get': 'yoti_callback', 'post': 'yoti_callback'}), name='yoti-callback'),
     path("verify-age/history/", AgeVerificationViewSet.as_view({'get': 'verification_history'}), name='verification-history'),
     path("verify-age/latest/", AgeVerificationViewSet.as_view({'get': 'latest_verification'}), name='latest-verification'),
     path("verify-age/", AgeVerificationViewSet.as_view({'post': 'verify_age'}), name='verify-age'),

@@ -101,26 +101,45 @@ class YotiAgeVerificationService:
             }
         
         try:
-            # Prepare session creation request according to Yoti Age Verification API
-            # CORRECT STRUCTURE: Use "checks" array with allowed_methods
-            # Threshold must be an integer inside checks[].config.threshold
-            # MUST include allowed_methods or Yoti will reject with E000007
+            # Yoti E000110: age_estimation threshold must be higher than barrier (e.g. 21 for 18+).
+            # Doc scan/digital_id use the actual barrier (18). See Yoti create-session example.
+            age_estimation_threshold = max(21, age_threshold_int)
+            # Prepare session creation request per https://developers.yoti.com/age-verification/create-a-session
             session_data = {
-                "type": "OVER",  # Check if user is OVER age threshold
-                "ttl": 900,  # 15 minutes session validity
-                "checks": [
-                    {
-                        "type": "AGE_VERIFICATION",
-                        "config": {
-                            "threshold": age_threshold_int,  # Must be integer, not string
-                            "allowed_methods": [
-                                "AGE_ESTIMATION",  # Face scan (fastest)
-                                "DOC_SCAN",        # Document scan
-                                "DIGITAL_ID"       # Digital ID verification
-                            ]
-                        }
-                    }
-                ]
+                "type": "OVER",
+                "ttl": 900,
+                "age_estimation": {
+                    "allowed": True,
+                    "threshold": age_estimation_threshold,
+                    "level": "PASSIVE",
+                    "retry_limit": 1,
+                },
+                "digital_id": {
+                    "allowed": True,
+                    "threshold": age_threshold_int,
+                    "age_estimation_allowed": True,
+                    "age_estimation_threshold": age_estimation_threshold,
+                    "level": "NONE",
+                    "retry_limit": 1,
+                },
+                "doc_scan": {
+                    "allowed": True,
+                    "threshold": age_threshold_int,
+                    "authenticity": "AUTO",
+                    "level": "PASSIVE",
+                    "retry_limit": 1,
+                },
+                "credit_card": {
+                    "allowed": False,
+                    "threshold": age_threshold_int,
+                    "level": "NONE",
+                    "retry_limit": 1,
+                },
+                "mobile": {
+                    "allowed": False,
+                    "level": "NONE",
+                    "retry_limit": 1,
+                },
             }
             
             # Add optional parameters
@@ -140,20 +159,10 @@ class YotiAgeVerificationService:
             # Get headers with Bearer token authentication
             headers = self._get_headers()
             
-            # Verify threshold is integer (critical for Yoti API)
-            threshold_value = session_data["checks"][0]["config"]["threshold"]
-            if not isinstance(threshold_value, int):
-                logger.error(f"Threshold is not int: {type(threshold_value)}, converting...")
-                session_data["checks"][0]["config"]["threshold"] = int(threshold_value)
-            
-            logger.info(f"Yoti threshold type: {type(session_data['checks'][0]['config']['threshold']).__name__}, value: {session_data['checks'][0]['config']['threshold']}")
-            
             # Log the exact request we're sending (for debugging)
-            # json.dumps will show integers without quotes (e.g., 18 not "18")
             request_body_json = json.dumps(session_data, indent=2)
             logger.info(f"Yoti create session - Request body: {request_body_json}")
             logger.info(f"Yoti create session - Age threshold: {age_threshold_int} (type: {type(age_threshold_int).__name__})")
-            logger.info(f"Yoti create session - Using checks array structure with AGE_VERIFICATION type")
             
             # Make API call to create session
             # Using json= parameter ensures proper JSON serialization with integer types preserved
