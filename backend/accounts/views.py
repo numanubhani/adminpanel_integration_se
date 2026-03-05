@@ -508,12 +508,26 @@ class ProfileViewSet(viewsets.ModelViewSet):
     
     @decorators.action(detail=False, methods=['get'], url_path='contributors/list')
     def contributors_list(self, request):
-        """Get all contributors with their complete profile data including body part images"""
+        """Get all contributors with their complete profile data including body part images.
+        Query params: search=... filters by screen_name (always) or by legal/first/last name only if allow_name_in_search=True.
+        """
         try:
             from django.db.models import Count, Q
             
             # Get all contributors with related data
             contributors = Profile.objects.filter(role='contributor').select_related('user')
+            search = (request.query_params.get('search') or '').strip()
+            if search:
+                # Match screen_name (any contributor) OR name fields only when allow_name_in_search is True
+                name_q = Q(allow_name_in_search=True) & (
+                    Q(legal_full_name__icontains=search) |
+                    Q(first_name__icontains=search) |
+                    Q(last_name__icontains=search) |
+                    Q(user__username__icontains=search)
+                )
+                contributors = contributors.filter(
+                    Q(screen_name__icontains=search) | name_q
+                )
             
             # Transform to frontend format
             contributors_data = []
@@ -548,12 +562,29 @@ class ProfileViewSet(viewsets.ModelViewSet):
                         'is_in_contest': is_in_contest
                     })
                 
-                # Calculate contest statistics
+                # Calculate contest statistics and awards (1st, Top 3, Top 10) from final outcomes
                 total_contests = ContestParticipant.objects.filter(contributor=profile).count()
-                
-                # Count contests won (1st place) - you may need to adjust this based on your voting system
-                # For now, we'll use a placeholder
-                contests_won = 0  # TODO: Calculate based on vote counts/rankings
+                participant_records = ContestParticipant.objects.filter(
+                    contributor=profile
+                ).annotate(vote_count=Count('votes'))
+                contests_won = 0
+                top3_finishes = 0
+                top10_finishes = 0
+                for participant in participant_records:
+                    all_in_contest = ContestParticipant.objects.filter(
+                        contest=participant.contest
+                    ).annotate(vote_count=Count('votes')).order_by('-vote_count', 'joined_at')
+                    position = 1
+                    for idx, p in enumerate(all_in_contest, start=1):
+                        if p.id == participant.id:
+                            position = idx
+                            break
+                    if position == 1:
+                        contests_won += 1
+                    if position <= 3:
+                        top3_finishes += 1
+                    if position <= 10:
+                        top10_finishes += 1
                 
                 # Get profile picture URL (presigned when using Wasabi)
                 profile_pic_url = None
@@ -610,9 +641,11 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     'contestsCount': total_contests,
                     'contests_count': total_contests,
                     'contestsWon': contests_won,
-                    'badges': contests_won,  # Assuming badges = wins for now
+                    'badges': contests_won,
                     'badgesCount': contests_won,
                     'badges_count': contests_won,
+                    'top3Finishes': top3_finishes,
+                    'top10Finishes': top10_finishes,
                     'earnings': 0,  # TODO: Calculate from contest prizes
                     'engagement': 0,  # TODO: Calculate based on views/favorites
                 }

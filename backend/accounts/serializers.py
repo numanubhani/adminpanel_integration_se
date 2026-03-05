@@ -5,6 +5,7 @@ import uuid
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.db.models import Sum
 from rest_framework import serializers
 from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, FavoriteGallery, Vote, Notification, AgeVerification
 import boto3
@@ -152,11 +153,42 @@ class ProfileSerializer(serializers.ModelSerializer):
     w9_completed = serializers.BooleanField(read_only=True)
     w9_unique_id = serializers.CharField(read_only=True)
     w9_completion_date = serializers.DateTimeField(read_only=True)
+    wallet_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = "__all__"
         read_only_fields = ("role",)
+
+    def get_wallet_balance(self, obj):
+        """Total completed payment amount (deposits) for this user's wallet."""
+        total = Payment.objects.filter(user=obj.user, status="completed").aggregate(
+            total=Sum("amount")
+        )
+        amount = (total.get("total") or 0)
+        return float(amount)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["wallet_balance"] = self.get_wallet_balance(instance)
+        return data
+
+    def validate(self, attrs):
+        """Ensure screen_name is unique (excluding current profile on update)."""
+        screen_name = attrs.get("screen_name")
+        if screen_name is None:
+            return attrs
+        screen_name = (screen_name or "").strip()
+        if not screen_name:
+            return attrs
+        qs = Profile.objects.filter(screen_name__iexact=screen_name)
+        if self.instance:
+            qs = qs.exclude(user_id=self.instance.user_id)
+        if qs.exists():
+            raise serializers.ValidationError(
+                {"screen_name": "This screen name is already in use. Please choose another."}
+            )
+        return attrs
     
     def get_profile_picture(self, obj):
         """Return full (possibly signed) URL for profile picture. Never return raw bucket URL when using Wasabi."""
@@ -297,7 +329,8 @@ class ProfileSerializer(serializers.ModelSerializer):
 class UserRegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    screenName = serializers.CharField(source="screen_name", required=False, allow_blank=True, max_length=20)
+    # Field name must match what the frontend sends (screen_name) so the value is bound and validated
+    screen_name = serializers.CharField(required=False, allow_blank=True, max_length=20)
 
     def validate_email(self, value):
         if User.objects.filter(username=value).exists() or User.objects.filter(email=value).exists():
@@ -308,11 +341,11 @@ class UserRegisterSerializer(serializers.Serializer):
         """
         Ensure screen names are unique across all profiles when provided.
         """
-        screen_name = attrs.get("screen_name") or ""
+        screen_name = (attrs.get("screen_name") or "").strip()
         if screen_name:
             if Profile.objects.filter(screen_name__iexact=screen_name).exists():
                 raise serializers.ValidationError(
-                    {"screenName": "This screen name is already in use. Please choose another."}
+                    {"screen_name": "This screen name is already in use. Please choose another."}
                 )
         return attrs
 
