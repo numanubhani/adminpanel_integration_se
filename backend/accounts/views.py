@@ -3216,6 +3216,20 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
             )
             
             if result.get('success'):
+                # Persist a record so the callback (AllowAny) can map session_id -> user
+                try:
+                    AgeVerification.objects.get_or_create(
+                        user=request.user,
+                        token=result.get('session_id') or "",
+                        defaults={
+                            "is_verified": False,
+                            "is_over_18": False,
+                            "verification_response": {},
+                        },
+                    )
+                except Exception as e:
+                    logger.error("Failed to persist AgeVerification session mapping: %s", e)
+
                 return Response({
                     'success': True,
                     'session_id': result.get('session_id'),
@@ -3281,8 +3295,8 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
                 # Save verification result to database
                 age_verification, created = AgeVerification.objects.get_or_create(
                     user=request.user,
+                    token=session_id,
                     defaults={
-                        'token': session_id,
                         'age': result.get('age'),
                         'date_of_birth': datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date() if result.get('date_of_birth') else None,
                         'is_over_18': result.get('is_over_18', False),
@@ -3318,7 +3332,10 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
                 'is_over_18': result.get('is_over_18', False),
                 'date_of_birth': result.get('date_of_birth'),
                 'status': result.get('status'),
-                'error': result.get('error')
+                'error': result.get('error'),
+                # Extra details for "checks completed" / "ID validity" (best-effort from Yoti response)
+                'id_valid': result.get('id_valid'),
+                'verification_details': result.get('verification_details'),
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -3346,8 +3363,43 @@ class AgeVerificationViewSet(viewsets.GenericViewSet):
         GET: Yoti redirects the user here after verification; return a success page (avoids 404).
         POST: Optional webhook/API callback with session_id in body.
         """
-        # GET = browser redirect from Yoti; return HTML so the popup doesn't show 404
+        # GET = browser redirect from Yoti; capture sessionId and (optionally) store result.
         if request.method == 'GET':
+            session_id = request.query_params.get('sessionId') or request.query_params.get('session_id')
+            if session_id:
+                from accounts.services.yoti_age_verification import YotiAgeVerificationService
+                from datetime import datetime
+                try:
+                    yoti_service = YotiAgeVerificationService()
+                    result = yoti_service.get_session_result(session_id)
+
+                    # If we have a stored mapping, update it so app can read latest verification immediately
+                    age_verification = AgeVerification.objects.filter(token=session_id).first()
+                    if age_verification and result.get('status') == 'COMPLETE':
+                        age_verification.age = result.get('age')
+                        if result.get('date_of_birth'):
+                            age_verification.date_of_birth = datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date()
+                        age_verification.is_over_18 = result.get('is_over_18', False)
+                        age_verification.is_verified = True
+                        age_verification.verification_response = result.get('raw_response', {})
+                        age_verification.error_message = None
+                        age_verification.save()
+
+                        # Update user profile if present
+                        try:
+                            profile = age_verification.user.profile
+                            if result.get('age'):
+                                profile.age = result.get('age')
+                            if result.get('date_of_birth'):
+                                profile.date_of_birth = datetime.strptime(result['date_of_birth'], '%Y-%m-%d').date()
+                            profile.save()
+                        except Exception as e:
+                            logger.error("Failed to update profile from Yoti callback GET: %s", e)
+                    elif not age_verification:
+                        logger.warning("Yoti callback GET received sessionId=%s but no AgeVerification mapping was found.", session_id)
+                except Exception as e:
+                    logger.error("Yoti callback GET failed for sessionId=%s: %s", session_id, e)
+
             html = """
             <!DOCTYPE html>
             <html><head><meta charset="utf-8"><title>Verification complete</title></head>

@@ -407,6 +407,54 @@ class YotiAgeVerificationService:
                 # Parse response based on Yoti API format
                 status = data.get('status')  # PENDING, IN PROGRESS, COMPLETE, FAIL, ERROR, CANCELLED, EXPIRED
                 
+                # Extract method/check details (best-effort; exact keys depend on Yoti response)
+                doc_scan_data = data.get('doc_scan') or {}
+                digital_id_data = data.get('digital_id') or {}
+                age_estimation_data = data.get('age_estimation') or {}
+
+                verification_details = {
+                    'status': status,
+                    'methods': {
+                        'doc_scan': bool(doc_scan_data),
+                        'digital_id': bool(digital_id_data),
+                        'age_estimation': bool(age_estimation_data),
+                    },
+                    'doc_scan': {
+                        'status': doc_scan_data.get('status') if isinstance(doc_scan_data, dict) else None,
+                        'authenticity': doc_scan_data.get('authenticity') if isinstance(doc_scan_data, dict) else None,
+                        'raw_keys': list(doc_scan_data.keys()) if isinstance(doc_scan_data, dict) else None,
+                    },
+                    'digital_id': {
+                        'status': digital_id_data.get('status') if isinstance(digital_id_data, dict) else None,
+                        'raw_keys': list(digital_id_data.keys()) if isinstance(digital_id_data, dict) else None,
+                    },
+                    'age_estimation': {
+                        'status': age_estimation_data.get('status') if isinstance(age_estimation_data, dict) else None,
+                        'raw_keys': list(age_estimation_data.keys()) if isinstance(age_estimation_data, dict) else None,
+                    },
+                }
+
+                # Best-effort "ID valid" inference from doc_scan authenticity/status fields, if present
+                id_valid = None
+                if isinstance(doc_scan_data, dict) and doc_scan_data:
+                    auth = (
+                        doc_scan_data.get('document_authenticity')
+                        or doc_scan_data.get('authenticity_result')
+                        or doc_scan_data.get('authenticity')
+                        or doc_scan_data.get('status')
+                    )
+                    auth_status = None
+                    if isinstance(auth, dict):
+                        auth_status = auth.get('status') or auth.get('result') or auth.get('outcome')
+                    elif isinstance(auth, str):
+                        auth_status = auth
+                    if isinstance(auth_status, str):
+                        auth_status_norm = auth_status.strip().upper()
+                        if auth_status_norm in {'PASS', 'PASSED', 'OK', 'VALID', 'SUCCESS', 'COMPLETE'}:
+                            id_valid = True
+                        elif auth_status_norm in {'FAIL', 'FAILED', 'INVALID', 'ERROR', 'CANCELLED', 'EXPIRED'}:
+                            id_valid = False
+
                 # Extract age information from the result
                 # The structure may vary based on which method was used
                 age = None
@@ -414,18 +462,16 @@ class YotiAgeVerificationService:
                 
                 # Check different possible locations for age data
                 if 'age_estimation' in data:
-                    age_data = data.get('age_estimation', {})
+                    age_data = age_estimation_data if isinstance(age_estimation_data, dict) else {}
                     age = age_data.get('age')
                 
                 if 'digital_id' in data:
-                    digital_id_data = data.get('digital_id', {})
                     if not age:
                         age = digital_id_data.get('age')
                     if not date_of_birth:
                         date_of_birth = digital_id_data.get('date_of_birth')
                 
                 if 'doc_scan' in data:
-                    doc_scan_data = data.get('doc_scan', {})
                     if not age:
                         age = doc_scan_data.get('age')
                     if not date_of_birth:
@@ -457,6 +503,8 @@ class YotiAgeVerificationService:
                     'date_of_birth': date_of_birth,
                     'status': status,
                     'error': None if status == 'COMPLETE' else f'Session status: {status}',
+                    'id_valid': id_valid,
+                    'verification_details': verification_details,
                     'raw_response': data
                 }
             else:
