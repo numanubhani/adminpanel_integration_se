@@ -25,7 +25,23 @@ else:
 SECRET_KEY = "django-insecure-tig6g^5j#vo*+9q^)_d6_!u$-j&e*&fxm--j-@cj3*e8@3ek0^"
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
-ALLOWED_HOSTS = ["*"]
+# Production: frontend and API on same domain (e.g. selectexposure.com); Nginx proxies /api/ to Django
+ALLOWED_HOSTS = [
+    h.strip() for h in os.environ.get(
+        "ALLOWED_HOSTS",
+        "selectexposure.com,www.selectexposure.com,108.61.229.67,localhost,127.0.0.1"
+    ).split(",") if h.strip()
+]
+
+# When Django is behind Nginx HTTPS proxy
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+CSRF_TRUSTED_ORIGINS = [
+    "https://selectexposure.com",
+    "https://www.selectexposure.com",
+]
+# Secure cookies when served over HTTPS (same-domain setup)
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 # Application definition
 INSTALLED_APPS = [
     "django.contrib.admin",

@@ -1,0 +1,55 @@
+# Example Nginx config for Select Exposure (same-domain API)
+# Frontend and API: https://selectexposure.com
+# Nginx proxies /api/ to Django on 127.0.0.1:8000
+#
+# Install: sudo cp nginx-selectexposure.conf.example /etc/nginx/sites-available/selectexposure
+#          sudo ln -sf /etc/nginx/sites-available/selectexposure /etc/nginx/sites-enabled/
+#          nginx -t && systemctl reload nginx
+
+server {
+    listen 80;
+    server_name 108.61.229.67;
+    return 301 http://108.61.229.67$request_uri;
+}
+
+server {
+    listen 80;
+    server_name selectexposure.com www.selectexposure.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name selectexposure.com www.selectexposure.com;
+
+    ssl_certificate /etc/letsencrypt/live/selectexposure.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/selectexposure.com/privkey.pem;
+
+    # USER FRONTEND
+    root /var/www/user;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    # ADMIN FRONTEND
+    location = /admin {
+        return 301 /admin/;
+    }
+
+    location ^~ /admin/ {
+        root /var/www;
+        index index.html;
+        try_files $uri $uri/ /admin/index.html;
+    }
+
+    # DJANGO BACKEND
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
