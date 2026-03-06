@@ -851,6 +851,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
         Includes user profile data for pre-filling the form.
         """
         from urllib.parse import urlencode
+        from django.utils import timezone
         
         try:
             profile = request.user.profile
@@ -908,12 +909,54 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 # Build W-9 URL with parameters
                 base_url = "https://selectexposure.zeronevault.com/w9forms/"
                 w9_url = f"{base_url}?{urlencode(url_params)}"
+
+            # Optional: refresh status from TaxZerone API (server-to-server) and update w9_completed.
+            # Call: GET /api/accounts/profile/w9/status/?refresh=1
+            refresh = (request.query_params.get("refresh") or "").strip() in {"1", "true", "True", "yes"}
+            remote_status = None
+            remote_error = None
+            if refresh and profile.role == "contributor" and profile.w9_unique_id and not profile.w9_completed:
+                try:
+                    from accounts.services.taxzerone_w9 import TaxZeroneW9Client, infer_w9_completed
+
+                    client = TaxZeroneW9Client()
+                    # Best-effort identifiers. If your TaxZerone account expects different keys,
+                    # you can pass them from frontend as query params and we’ll forward them.
+                    params = {}
+                    # Prefer explicit query params if provided
+                    for k in ("formId", "filerId", "payeeRef", "email"):
+                        v = request.query_params.get(k)
+                        if v:
+                            params[k] = v
+                    # Default: use our unique id as payee reference and email as fallback
+                    if not params:
+                        params = {
+                            "payeeRef": profile.w9_unique_id,
+                            "email": profile.user.email,
+                        }
+
+                    remote_status = client.get_w9_status(params=params)
+
+                    if infer_w9_completed(remote_status):
+                        profile.w9_completed = True
+                        profile.w9_completion_date = timezone.now()
+
+                    # store audit info
+                    w9_data = profile.w9_data or {}
+                    w9_data["taxzerone_status"] = remote_status
+                    w9_data["taxzerone_last_checked_at"] = timezone.now().isoformat()
+                    profile.w9_data = w9_data
+                    profile.save()
+                except Exception as e:
+                    remote_error = str(e)
             
             return Response({
                 'w9_completed': profile.w9_completed,
                 'w9_unique_id': profile.w9_unique_id,
                 'w9_url': w9_url,
                 'w9_completion_date': profile.w9_completion_date,
+                'remote_status': remote_status,
+                'remote_error': remote_error,
             }, status=status.HTTP_200_OK)
             
         except AttributeError as e:
