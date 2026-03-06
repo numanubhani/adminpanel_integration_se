@@ -5,6 +5,7 @@ Handles age verification using Yoti Age Verification API with Bearer token authe
 import os
 import json
 import requests
+from urllib.parse import urlencode
 from django.conf import settings
 import logging
 
@@ -18,7 +19,10 @@ class YotiAgeVerificationService:
     """
     
     BASE_URL = "https://age.yoti.com/api/v1"
-    AGE_VERIFICATION_WEB_URL = "https://age.yoti.com/age-verification"
+    # User-facing Age Verification web UI base URL.
+    # Per Yoti docs, launch URL should be:
+    #   https://age.yoti.com?sessionId=<sessionId>&sdkId=<sdkId>
+    AGE_VERIFICATION_WEB_URL = "https://age.yoti.com"
     
     def __init__(self):
         self.sdk_id = getattr(settings, 'YOTI_SDK_ID', os.environ.get('YOTI_SDK_ID', ''))
@@ -272,9 +276,16 @@ class YotiAgeVerificationService:
                 status = data.get('status')
                 expires_at = data.get('expires_at')
                 
-                # Build verification URL - Yoti uses session ID in the URL
+                # Build verification URL - Yoti user view expects:
+                #   https://age.yoti.com?sessionId=<sessionId>&sdkId=<sdkId>
                 if session_id:
-                    verification_url = f"{self.AGE_VERIFICATION_WEB_URL}?sessionId={session_id}"
+                    query = urlencode(
+                        {
+                            "sessionId": session_id,
+                            "sdkId": self.sdk_id,
+                        }
+                    )
+                    verification_url = f"{self.AGE_VERIFICATION_WEB_URL}?{query}"
                 else:
                     verification_url = None
                 
