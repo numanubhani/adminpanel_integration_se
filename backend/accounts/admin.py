@@ -1,4 +1,6 @@
+import uuid
 from django.contrib import admin
+from django.contrib import messages
 from .models import Profile, Payment, BodyPartImage, Admin, Contest, ContestParticipant, SmokeSignal, FavoriteImage, Vote, Notification, AgeVerification
 
 
@@ -12,11 +14,46 @@ class ProfileAdmin(admin.ModelAdmin):
 		"date_of_birth",
 		"age",
 		"phone_number",
+		"w9_unique_id",
+		"w9_completed",
+		"w9_completion_date",
 		"id_document",
 	)
-	search_fields = ("user__username", "user__email", "legal_full_name", "screen_name", "phone_number")
-	list_filter = ("role", "is_over_18")
+	search_fields = ("user__username", "user__email", "legal_full_name", "screen_name", "phone_number", "w9_unique_id")
+	list_filter = ("role", "is_over_18", "w9_completed")
 	readonly_fields = ("id_document",)
+	actions = ("generate_w9_unique_id_action",)
+	fieldsets = (
+		(None, {
+			"fields": ("user", "role", "legal_full_name", "screen_name", "date_of_birth", "age", "phone_number")
+		}),
+		("W-9 Tax Form (TaxZerone)", {
+			"fields": ("w9_unique_id", "w9_completed", "w9_completion_date", "w9_data"),
+			"description": "Generate ID: select this profile on the list, use action 'Generate W-9 unique ID', or have the contributor call POST /api/accounts/profile/w9/generate-unique-id/."
+		}),
+		("Address & location", {
+			"fields": ("address", "city", "state", "zip_code", "country", "country_residence", "nationality")
+		}),
+		("Other", {
+			"fields": ("id_document", "profile_picture", "card_number", "is_over_18", "bio", "name_visibility",
+				"occupation", "creator_pathway", "first_name", "last_name", "gender", "height", "weight",
+				"shoe_size", "skin_tone", "hair_color", "body_type", "penis_length", "female_body_type",
+				"bust_size", "milf", "active_profile_image")
+		}),
+	)
+
+	@admin.action(description="Generate W-9 unique ID")
+	def generate_w9_unique_id_action(self, request, queryset):
+		updated = 0
+		for profile in queryset:
+			if not profile.w9_unique_id:
+				profile.w9_unique_id = str(uuid.uuid4())
+				profile.save(update_fields=["w9_unique_id"])
+				updated += 1
+		if updated:
+			self.message_user(request, f"Generated W-9 unique ID for {updated} profile(s).", messages.SUCCESS)
+		else:
+			self.message_user(request, "No profiles needed an ID (all selected already had one).", messages.WARNING)
 
 
 @admin.register(Payment)

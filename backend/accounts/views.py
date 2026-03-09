@@ -334,9 +334,8 @@ class AuthViewSet(viewsets.GenericViewSet):
             # Generate unique ID
             unique_id = str(uuid.uuid4())
             
-            # Build W-9 URL with only uniqueid parameter (matching working format)
-            # Format: https://selectexposure.zeronevault.com/w9forms/?uniqueid={uuid}
-            base_url = "https://selectexposure.zeronevault.com/w9forms/"
+            # Build W-9 URL with only uniqueid parameter (sandbox/production from settings)
+            base_url = (getattr(settings, "W9_FORM_BASE_URL", None) or "https://selectexposuretest.taxinterface.com/w9forms/").rstrip("/") + "/"
             w9_url = f"{base_url}?uniqueid={unique_id}"
             
             # Store the unique ID temporarily (you can use session, cache, or a temporary model)
@@ -435,7 +434,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 {
                     "error": "W-9 form must be completed before adding funds",
                     "w9_required": True,
-                    "w9_url": f"https://selectexposure.zeronevault.com/w9forms/?uniqueid={profile.w9_unique_id}" if profile.w9_unique_id else None,
+                    "w9_url": f"{getattr(settings, 'W9_FORM_BASE_URL', '').rstrip('/')}/?uniqueid={profile.w9_unique_id}" if profile.w9_unique_id else None,
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
@@ -734,8 +733,8 @@ class ProfileViewSet(viewsets.ModelViewSet):
             if profile.phone_number:
                 url_params['phone'] = profile.phone_number
             
-            # Build W-9 URL with parameters
-            base_url = "https://selectexposure.zeronevault.com/w9forms/"
+            # Build W-9 URL with parameters (sandbox/production from settings)
+            base_url = (getattr(settings, "W9_FORM_BASE_URL", None) or "https://selectexposuretest.taxinterface.com/w9forms/").rstrip("/") + "/"
             w9_url = f"{base_url}?{urlencode(url_params)}"
             
             return Response({
@@ -906,8 +905,8 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 if profile.phone_number:
                     url_params['phone'] = profile.phone_number
                 
-                # Build W-9 URL with parameters
-                base_url = "https://selectexposure.zeronevault.com/w9forms/"
+                # Build W-9 URL with parameters (sandbox/production from settings)
+                base_url = (getattr(settings, "W9_FORM_BASE_URL", None) or "https://selectexposuretest.taxinterface.com/w9forms/").rstrip("/") + "/"
                 w9_url = f"{base_url}?{urlencode(url_params)}"
 
             # Optional: refresh status from TaxZerone API (server-to-server) and update w9_completed.
@@ -989,53 +988,89 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @decorators.action(detail=False, methods=['post'], url_path='w9/callback')
+    @decorators.action(detail=False, methods=['post'], url_path='w9/callback', permission_classes=[AllowAny])
     def w9_callback(self, request):
         """
-        Handle webhook callback from TaxZerone (Option B - Callback/Redirect Flow).
-        This endpoint receives notifications when W-9 form is completed.
+        Handle webhook callback from TaxZerone when a creator submits Form W-9.
+        AllowAny: TaxZerone POSTs to this URL without auth credentials.
+        Supports both flows:
+        - We generate uniqueid: we send user to form with ?uniqueid=OUR_UUID; webhook sends same id back.
+        - TaxZerone generates uniqueid: webhook sends uniqueid + email (or similar); we find profile by email,
+          save the uniqueid on profile, and mark completed.
         """
+        import logging
         from django.utils import timezone
-        
+
+        logger = logging.getLogger(__name__)
+        logger.info("W-9 webhook received from TaxZerone (POST /api/accounts/profile/w9/callback/)")
+
         try:
-            # Extract unique_id from callback data
-            unique_id = request.data.get('uniqueid') or request.data.get('unique_id')
-            
+            payload = request.data if isinstance(request.data, dict) else {}
+            logger.info("W-9 webhook payload: %s", payload)
+            unique_id = (
+                payload.get('uniqueid') or payload.get('unique_id') or
+                payload.get('payeeRef') or payload.get('payee_ref')
+            )
+            if isinstance(unique_id, (list, dict)):
+                unique_id = None
+            if unique_id and not isinstance(unique_id, str):
+                unique_id = str(unique_id)
             if not unique_id:
                 return Response(
-                    {'error': 'unique_id is required'},
+                    {'error': 'unique_id (or payeeRef) is required in webhook payload'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Find profile by unique_id
+            profile = None
+            # 1) Find by w9_unique_id (flow where we generated the ID and sent it in the URL)
             try:
                 profile = Profile.objects.get(w9_unique_id=unique_id)
             except Profile.DoesNotExist:
+                pass
+            # 2) If not found, TaxZerone may have generated the ID — find contributor by email and assign this ID
+            if not profile:
+                webhook_email = (payload.get('email') or payload.get('payeeEmail') or payload.get('payerEmail') or '').strip()
+                if webhook_email:
+                    webhook_email = webhook_email.lower()
+                    from django.contrib.auth.models import User
+                    try:
+                        user = User.objects.get(email=webhook_email)
+                        if hasattr(user, 'profile'):
+                            prof = user.profile
+                            if prof.role == 'contributor':
+                                profile = prof
+                                profile.w9_unique_id = unique_id
+                    except User.DoesNotExist:
+                        pass
+            
+            if not profile:
                 return Response(
-                    {'error': 'Profile not found for this unique_id'},
+                    {'error': 'Profile not found for this unique_id; if TaxZerone generates the ID, include email in webhook so we can match.'},
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Mark as completed
             profile.w9_completed = True
             profile.w9_completion_date = timezone.now()
-            
-            # Store callback data
             profile.w9_data = {
                 'callback_received': True,
-                'callback_data': request.data,
+                'callback_data': payload,
                 'callback_timestamp': timezone.now().isoformat(),
             }
-            
-            profile.save()
-            
+            profile.save(update_fields=['w9_completed', 'w9_completion_date', 'w9_data', 'w9_unique_id'])
+
+            logger.info(
+                "W-9 completed: profile user=%s (id=%s), unique_id=%s, w9_completion_date=%s",
+                profile.user.email, profile.user_id, unique_id, profile.w9_completion_date,
+            )
+
             return Response({
                 'status': 'success',
                 'message': 'W-9 completion recorded',
                 'unique_id': unique_id,
             }, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
+            logger.exception("W-9 webhook error: %s", e)
             import traceback
             traceback.print_exc()
             return Response(

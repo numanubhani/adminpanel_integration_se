@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-# Load environment variables from backend/.env
+# Load environment variables from backend/.env only (single source)
 _load_env = Path(BASE_DIR) / ".env"
 if _load_env.exists():
     load_dotenv(dotenv_path=_load_env)
@@ -271,3 +271,12 @@ YOTI_SDK_ID = os.environ.get('YOTI_SDK_ID', 'd166a758-7100-4626-8f6f-08617879079
 YOTI_API_KEY = os.environ.get('YOTI_API_KEY', 'L8GLhGceggptE7W7X-mTqvqOJG9GaYq9w6Q4CjP8nob22bWyRpESm0t3NRA=')
 # Default to a placeholder - MUST be set to a valid HTTPS URL in production
 YOTI_CALLBACK_URL = os.environ.get('YOTI_CALLBACK_URL', 'https://example.com/yoti-callback')
+
+# W-9 form collection URL (TaxZerone / ZeroneVault). Sandbox vs production set in .env.
+# Sandbox: https://selectexposuretest.taxinterface.com/w9forms/
+# Production: https://selectexposure.zeronevault.com/w9forms/
+W9_FORM_BASE_URL = (os.environ.get("W9_FORM_BASE_URL") or "").strip() or (
+    "https://selectexposuretest.taxinterface.com/w9forms/"
+    if os.environ.get("TAXZERONE_ENV", "sandbox").strip().lower() in ("sandbox",)
+    else "https://selectexposure.zeronevault.com/w9forms/"
+)
