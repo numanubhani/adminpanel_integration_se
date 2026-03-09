@@ -1005,10 +1005,13 @@ class ProfileViewSet(viewsets.ModelViewSet):
         logger.info("W-9 webhook received from TaxZerone (POST /api/accounts/profile/w9/callback/)")
 
         try:
+            # TaxZerone updated webhook fields: https://sandbox.taxzerone.com/docs/#description/webhook-endpoint-requirements
+            # Key fields: form_w9_id, status ("Pending"|"Completed"), email_address, name, tin_type, etc.
             payload = request.data if isinstance(request.data, dict) else {}
             logger.info("W-9 webhook payload: %s", payload)
+
             unique_id = (
-                payload.get('uniqueid') or payload.get('unique_id') or
+                payload.get('form_w9_id') or payload.get('uniqueid') or payload.get('unique_id') or
                 payload.get('payeeRef') or payload.get('payee_ref')
             )
             if isinstance(unique_id, (list, dict)):
@@ -1017,19 +1020,25 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 unique_id = str(unique_id)
             if not unique_id:
                 return Response(
-                    {'error': 'unique_id (or payeeRef) is required in webhook payload'},
+                    {'error': 'form_w9_id (or uniqueid/payeeRef) is required in webhook payload'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
+            webhook_status = (payload.get('status') or '').strip()
+            is_completed = str(webhook_status).lower() == 'completed'
+
             profile = None
-            # 1) Find by w9_unique_id (flow where we generated the ID and sent it in the URL)
+            # 1) Find by w9_unique_id (we sent this in the form URL)
             try:
                 profile = Profile.objects.get(w9_unique_id=unique_id)
             except Profile.DoesNotExist:
                 pass
-            # 2) If not found, TaxZerone may have generated the ID — find contributor by email and assign this ID
+            # 2) If not found, match by email (TaxZerone field: email_address)
             if not profile:
-                webhook_email = (payload.get('email') or payload.get('payeeEmail') or payload.get('payerEmail') or '').strip()
+                webhook_email = (
+                    payload.get('email_address') or payload.get('email') or
+                    payload.get('payeeEmail') or payload.get('payerEmail') or ''
+                ).strip()
                 if webhook_email:
                     webhook_email = webhook_email.lower()
                     from django.contrib.auth.models import User
@@ -1042,31 +1051,38 @@ class ProfileViewSet(viewsets.ModelViewSet):
                                 profile.w9_unique_id = unique_id
                     except User.DoesNotExist:
                         pass
-            
+
             if not profile:
                 return Response(
-                    {'error': 'Profile not found for this unique_id; if TaxZerone generates the ID, include email in webhook so we can match.'},
+                    {'error': 'Profile not found for form_w9_id; include email_address in webhook to match by email.'},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
-            profile.w9_completed = True
-            profile.w9_completion_date = timezone.now()
+
+            profile.w9_completed = is_completed
+            if is_completed:
+                profile.w9_completion_date = timezone.now()
             profile.w9_data = {
                 'callback_received': True,
                 'callback_data': payload,
                 'callback_timestamp': timezone.now().isoformat(),
+                'webhook_status': webhook_status,
             }
-            profile.save(update_fields=['w9_completed', 'w9_completion_date', 'w9_data', 'w9_unique_id'])
+            update_fields = ['w9_completed', 'w9_data', 'w9_unique_id']
+            if is_completed:
+                update_fields.append('w9_completion_date')
+            profile.save(update_fields=update_fields)
 
             logger.info(
-                "W-9 completed: profile user=%s (id=%s), unique_id=%s, w9_completion_date=%s",
-                profile.user.email, profile.user_id, unique_id, profile.w9_completion_date,
+                "W-9 webhook processed: user=%s form_w9_id=%s status=%s w9_completed=%s",
+                profile.user.email, unique_id, webhook_status, profile.w9_completed,
             )
 
             return Response({
                 'status': 'success',
-                'message': 'W-9 completion recorded',
-                'unique_id': unique_id,
+                'message': 'W-9 status recorded',
+                'form_w9_id': unique_id,
+                'webhook_status': webhook_status,
+                'w9_completed': profile.w9_completed,
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
