@@ -1,0 +1,142 @@
+Privacy Policy
+Last Updated: March 25, 2025
+Description
+This Privacy Policy shall describe how Select Exposure LLC  (“Select Exposure”) collects, uses, and shares information about you and applies to your use of www.selectexposure.com or any of our Affiliated Websites (hereinafter the “Site”), and all content and services that Select Exposure owns, controls, and makes available. By using the Site and Select Exposure’s services, you agree to Select Exposure’s Terms of Service and all other terms as described by this Privacy Policy. If you do not agree with this Privacy Policy, you must discontinue use of the Site and Select Exposure’s services. This Privacy Policy is fully incorporated into Select Exposure’s Terms and Conditions, and therefore governs your use of the Site and Select Exposure’s services. By using the Site and Select Exposure’s services, you do hereby accept this Privacy Policy. All capitalized terms used in this Privacy Policy or in any notice given under or in connection with this Privacy Policy have the same meaning in this Privacy Policy or notice as in the Terms and Conditions, unless expressly defined otherwise in this Privacy Policy.
+Topics:
+What data do we collect?
+How do we collect your data?
+How will we use your data?
+How do we store your data?
+What are your data protection rights?
+What are cookies?
+How do we use cookies?
+What types of cookies do we use?
+How to manage your cookies
+Privacy Policies of other websites
+Changes to our privacy policy
+EU Digital Services Act
+How to contact us
+How to contact the appropriate authorities
+DATA AND PERSONAL INFORMATION THAT WE COLLECT AND HOW IT IS COLLECTED
+Our company collects the following data:
+Content Contributors:
+Legal first and last name
+Email address
+Phone number
+Physical address, city, state/province, zip/postal code and country
+Birth date
+Government issued photo identification
+Paying Users:
+Legal first and last name
+Email address
+All Users:
+Demographic Information (IP address, referring website information, internet browser used, zip code and/or other data regarding search history, browsing history and user history)
+Device Information (web browser, IP address, time zone, cookies)
+All information that is collected may be shared with other third parties as necessary to comply with applicable law or to cooperate with law enforcement and the court system.
+When you visit the Site, we automatically collect certain information about your device, including information about your web browser, IP address, time zone, and some of the cookies that are installed on your device. Additionally, as you browse the Site, we collect information about the individual web pages or products that you view, what websites or search terms referred you to the Site, and information about how you interact with the Site. We refer to this automatically-collected information as "Device Information".
+We may use information about you, including your personal information, for any purposes consistent with the statements under this Privacy Policy or as is permissible under applicable law, including, but not limited to:
+Managing the Site and our services;
+Processing and facilitating your transactions;
+Responding to inquiries and requests;
+Sending you notices, updates, changes to policy information, and support and administrative messages;
+Preventing fraud, breach of our policies and terms, and harm;
+Monitoring usage and activity; and
+Improving the Site and our services.
+We may also share your information with any third parties in order to fulfill any products or services that you purchase from the Site, and for any purpose consistent with this Privacy Policy or as permissible under applicable law, including, but not limited to:
+Complying with the law, and where required, in response to lawful requests by public authorities, including to meet law enforcement requirements;
+Protecting the rights, property, and security of Select Exposure, its services, or any third party;
+In connection with any proposed merger, purchase, sale, or any other type of business acquisition or combination of all or any portion of our assets, or transfer of all or a portion of Select Exposure to another company;
+For purposes disclosed to you when you provide Select Exposure with personal information; and
+With your consent or at your discretion.
+We collect Device Information using the following technologies:
+"Cookies" are data files that are placed on your device or computer and often include an anonymous unique identifier.
+"Log files" track actions occurring on the Site, and collect data including your IP address, browser type, Internet service provider, referring/exit pages, and date/time stamps.
+"Web beacons", "tags", and "pixels" are electronic files used to record information about how you browse the Site.
+HOW DO WE USE YOUR PERSONAL INFORMATION AND DATA?
+Any information collected is used to:
+To improve the information that the Site provides to its users.
+Confirm the identity of the Site’s users.
+Our Site may use services such as Google Analytics which transmits certain user and website traffic data to Wasabi, Vultr or other similar servers. We use reports provided by Yoti to provide identity verification services. You can read more about how Yoti uses your Personal Information here: Privacy at Yoti
+We use the Device Information that we collect to help us screen for potential risk and fraud (in particular, your IP address), and more generally to improve and optimize our Site (for example, by generating analytics about how our users browse and interact with the Site, and to assess the success of our marketing and advertising campaigns). We also use the information collected for marketing and advertising purposes.
+STORING AND SHARING YOUR DATA AND PERSONAL INFORMATION
+We securely store your data using servers hosted by GoDaddy. Information collected by the data server may be stored in such service’s regional data centers. The transfer and storage of your information and data are made in accordance with the terms and policies of the data server. More information about how your data and personal information are stored and transmitted can be found here:
+We share your Personal Information with third parties to help us use your Personal Information, as described above. For example, we use Google Analytics to help us understand how our customers use the Site -- you can read more about how Google uses your Personal Information here: https://www.google.com/intl/en/policies/privacy/. You can also opt-out of Google Analytics here: https://tools.google.com/dlpage/gaoptout
+Finally, we may also share your Personal Information to comply with applicable laws and regulations, to respond to a subpoena, search warrant or other lawful request for information we receive, or to otherwise protect our rights.
+MARKETING AND BEHAVIORAL ADVERTISING
+We would like to send you information about our products and services that we think you might like. You have the right to stop us from contacting you for marketing purposes or sharing your information for marketing purposes. If you no longer wish to be contacted for marketing purposes, please contact us at: support@selectexposure.com.
+As described above, we use your Personal Information to provide you with targeted advertisements or marketing communications we believe may be of interest to you. For more information about how targeted advertising works, you can visit the Network Advertising Initiative’s ("NAI") educational page at https://www.networkadvertising.org/understanding-online-advertising/
+You can opt out of targeted advertising by using the links below:
+Facebook: https://www.facebook.com/settings/?tab=ads
+Google: https://www.google.com/settings/ads/anonymous
+Bing: https://about.ads.microsoft.com/en-us/resources/policies/personalized-ads
+Additionally, you can opt out of some of these services by visiting the Digital Advertising Alliance’s opt-out portal at: http://optout.aboutads.info/.
+WHAT ARE YOUR DATA PROTECTION RIGHTS?
+Select Exposure would like to make sure you are fully aware of all of your data protection rights. Every User is entitled to the following:
+The right to access – You have the right to request Select Exposure for copies of your personal data. We may charge a small fee for this service.
+The right to rectification – You have the right to request that Select Exposure corrects any information that you believe is inaccurate. You also have the right to request Select Exposure to complete information that you believe is incomplete.
+The right to erasure - You have the right to request that we erase your personal data, under certain conditions.
+The right to restrict processing – You have the right to request that Select Exposure restrict the processing of your personal data, under certain conditions.
+The right to object to processing – You have the right to object to Select Exposure’s processing of your personal data, under certain conditions.
+The right to data portability – You have the right to request that Select Exposure transfer the data that we have collected to another organization, or directly to you, under certain conditions.
+The right to complain to a supervisory authority – You can complain about our processing of your personal data.
+The right to withdraw consent – To the extent that the legal basis of our processing of your personal data is consent, you have the right to withdraw that consent.
+If you make a request, we have one month to respond to you. If you would like to exercise any of these rights, please contact us at: info@selectexposure.com
+These rights are subject to certain limitations and exceptions. You can learn more about the rights of data subjects by visiting:
+https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/
+https://gdpr.eu/what-is-gdpr/
+WHAT ARE COOKIES?
+"Cookies" are data files that are placed on your device or computer and often include an anonymous unique identifier. For more information about cookies, and how to disable cookies, visit: http://www.allaboutcookies.org
+HOW DO WE USE COOKIES?
+Select Exposure uses cookies in a range of ways to improve your experience on the Site including:
+Authentication
+Keeping you signed in
+Membership Subscription
+Content Access and History
+Personalization
+Security
+Analysis
+Understanding how you use our website
+WHAT TYPES OF COOKIES DO WE USE?
+There are a number of different types of cookies. Select Exposure uses the following types:
+Functionality – Select Exposure uses these cookies so that we recognize you on our website and remember certain previously selected preferences that you’ve made. These could include what language you prefer and location you are in. A mix of first-party and third-party cookies is used.
+Advertising – Select Exposure uses these cookies to collect information about your visit to our website, the content you viewed, the links you followed and information about your browser, device and your IP address. Select Exposure sometimes shares some limited aspect of this data with third parties for advertising purposes. Select Exposure may also share online data collected through cookies with our advertising partners. This means that when you visit another website, you may be shown advertising based on your browsing patterns on our website.
+HOW TO MANAGE COOKIES
+You can set your browser to not accept cookies, and the above mentioned website will tell you how to remove cookies from your browser. Please be advised that in a few cases, you may not be able to access the Site and any features, such as accessing Content on the Site, may not function as a result of disabling cookies.
+PRIVACY POLICIES OF THIRD PARTY WEBSITES
+We may link to third party sites or services that we do not control. If you click on one of those links, you will be taken to websites that we do not control. This Privacy Policy does not apply to the privacy practices or policies of those websites. You are advised to read the privacy policies of those websites carefully. We are in no way responsible for third party websites or services.
+SECURITY
+We are committed to ensuring that your information is secure. In order to prevent unauthorized access or disclosure, we have put in place suitable physical, electronic and managerial procedures to safeguard and secure the information we collect online. All transactions on our systems are encrypted using SSL (“Secure Sockets Layers”) certificates and all data is secured and encrypted. Additional information about the policies and practices of our security service can be found here:
+DO NOT TRACK
+Do Not Track ("DNT") is a privacy preference that users can set in their web browsers. DNT is a way for users to inform websites and services that they do not want certain information about their webpage visits collected over time and across websites or online services. This Site does not support the DNT browser setting. As such, please note that we do not alter our Site’s data collection and use practices when we see a Do Not Track signal from your browser.
+CALIFORNIA PRIVACY RIGHTS
+If you live in California and are using our Site, you can request a list of the personal information that is collected. You can make a request one time each year.
+To exercise your rights, you can email us at legal@selectexposure.com the information provided below. Mention in any email that you are making a “California Shine the Light” inquiry. We will use our best efforts to respond within 30 days.
+NEVADA PRIVACY RIGHTS
+Nevada residents who wish to exercise their sale opt-out rights under Nevada Revised Statutes Chapter 603A may submit a request to this designated address: legal@selectexposure.com However, please know we do not currently sell data triggering that statute’s opt-out requirements.
+PRIVACY RIGHTS
+California and Canadian Residents:
+You can make the following choices regarding your Personal Information:
+Access To Your Personal Information. You may request access to your Personal Information by contacting us at the address described below. If required by law, upon request, we will grant you reasonable access to the Personal Information that we have about you.   Note that California residents may be entitled to ask us for a notice describing any use of Personal Information (if any).
+Deletion Of Your Personal Information.  You may request information about how long we keep a specific type of information or request that we delete your Personal Information by contacting us at the address described below.  If required by law we will grant a request to delete information, but you should note that in many situations we must keep your Personal Information to comply with our legal obligations, resolve disputes, enforce our agreements, or for another one of our business purposes.
+Correcting Your Personal Information. Canadian residents may have the right to correct or amend personal information in cases where accuracy and completeness is deficient. If required by law, we will grant a request to correct or modify your information, but you should note that in many situations we may keep historical information in our backup files as permitted by law.
+Opting Out Of The Sale Of Personal Information. To the extent that the information collected by third parties on this website through cookies constitutes a “sale” of personal information under the California Consumer Privacy Act, California residents can exercise the right to opt-out of that sale by visiting the Cookies Settings option on your browser
+If you are a UK or European resident, you have the right to access personal information we hold about you and to ask that your personal information be corrected, updated, or deleted. If you would like to exercise this right, please contact us through the contact information below.
+Additionally, if you are a UK or European resident we note that we are processing your information in order to fulfill contracts we might have with you (for example if you sign up for a membership subscription on the Site), or otherwise to pursue our legitimate business interests listed above. Additionally, please note that your information will be transferred outside of Europe, including to Canada and the United States.
+DATA RETENTION
+When you become a customer of the Site, we will maintain your data and information for our records unless and until you ask us to delete this information.
+CHANGES
+We reserve the right to revise and reissue this Privacy Policy at any time. Any changes will be effective immediately upon posting of the revised Privacy Policy. Your continued use of the Site and Select Exposure’s services indicates your consent to the Privacy Policy then posted. If the changes are material, Select Exposure may provide you additional notice of the changes to your e-mail address.
+EU DIGITAL SERVICES ACT
+In accordance with Article 24(2) of the Digital Services Act, Select Exposure is required to publish information on the average monthly active recipients of our service in the European Union.
+As of September 26, 2024, Select Exposure has zero (0) average monthly recipients of the service in the European Union, calculated as an average over the period of the past six months.
+For inquiries, requests and complaints related to the Digital Services Act, please contact us at legal@selectexposure.com
+DSA Compliance Officer:  legal@selectexposure.com
+Transparency Report:
+MINORS
+The Site and Select Exposure’s services are meant solely for adults aged 18 and older. Select Exposure does not knowingly collect personally identifiable information from minors under 18. If you are a parent or legal guardian and think your minor under 18 has given Select Exposure information, please contact us with the information provided below. Mention in any email that you are making a “COPPA Information Request.”
+CONTACT US
+For more information about our privacy practices, if you have questions, or if you would like to make a complaint, please contact us by email at: legal@selectexposure.com
+HOW TO CONTACT THE APPROPRIATE AUTHORITY
+Should you wish to report a complaint or if you feel that Select Exposure has not addressed your concern in a satisfactory manner, you may contact the following authorities:
+European Data Protection Supervisor: https://edps.europa.eu/data-protection/our-role-supervisor_en
+UK Information Commissioner Office: https://ico.org.uk/global/contact-us/
