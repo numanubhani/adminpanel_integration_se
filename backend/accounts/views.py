@@ -4,6 +4,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.http import HttpResponse
 from rest_framework import status, permissions, viewsets, decorators
+from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -1101,6 +1102,26 @@ class ProfileViewSet(viewsets.ModelViewSet):
             )
 
 
+class W9WebhookView(APIView):
+    """
+    Standalone webhook endpoint for TaxZerone W-9 callbacks.
+    No authentication required (TaxZerone POSTs without credentials).
+    URL: /api/accounts/profile/w9/callback/
+    Accepts the fields from https://sandbox.taxzerone.com/docs/#description/webhook-endpoint-requirements
+    (form_w9_id, status, email_address, name, etc.).
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []  # No auth; webhook is called by TaxZerone without credentials
+
+    def get(self, request):
+        """Allow GET so browser/health checks get 200 instead of 401 from another route."""
+        return Response(
+            {'message': 'W-9 webhook endpoint. Use POST with TaxZerone payload (form_w9_id, status, email_address, etc.).'},
+            status=status.HTTP_200_OK
+        )
+
+    def post(self, request):
+        return ProfileViewSet.w9_callback(ProfileViewSet(), request)
 
 
 # ══════════════════════════════════════════════════════════════════════

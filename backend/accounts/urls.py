@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     AuthViewSet,
     ProfileViewSet,
+    W9WebhookView,
     BodyPartImageViewSet,
     AdminViewSet,
     DashboardViewSet,
@@ -60,7 +61,7 @@ urlpatterns = [
     path("profile/w9/generate-unique-id/", ProfileViewSet.as_view({'post': 'generate_w9_unique_id'}), name='w9-generate-unique-id'),
     path("profile/w9/mark-completed/", ProfileViewSet.as_view({'post': 'mark_w9_completed'}), name='w9-mark-completed'),
     path("profile/w9/status/", ProfileViewSet.as_view({'get': 'get_w9_status'}), name='w9-status'),
-    path("profile/w9/callback/", ProfileViewSet.as_view({'post': 'w9_callback'}), name='w9-callback'),
+    path("profile/w9/callback/", W9WebhookView.as_view(), name='w9-callback'),
     
     # Contributor endpoints (keeping old URLs)
     path("contributor-metrics/", ProfileViewSet.as_view({'get': 'contributor_metrics'}), name='contributor-metrics'),
