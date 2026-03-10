@@ -45,6 +45,7 @@ from .serializers import (
     AgeVerificationRequestSerializer,
     AgeVerificationResponseSerializer,
     AgeVerificationSerializer,
+    W9WebhookInputSerializer,
 )
 
 # Optional: Twilio for SMS sending
@@ -1107,20 +1108,25 @@ class W9WebhookView(APIView):
     Standalone webhook endpoint for TaxZerone W-9 callbacks.
     No authentication required (TaxZerone POSTs without credentials).
     URL: /api/accounts/profile/w9/callback/
-    Accepts the fields from https://sandbox.taxzerone.com/docs/#description/webhook-endpoint-requirements
-    (form_w9_id, status, email_address, name, etc.).
+    Accepts JSON or form (application/x-www-form-urlencoded).
+    Browsable API shows a form so you can fill and submit fields easily.
     """
     permission_classes = [AllowAny]
     authentication_classes = []  # No auth; webhook is called by TaxZerone without credentials
+    serializer_class = W9WebhookInputSerializer
+
+    def get_serializer_class(self):
+        return W9WebhookInputSerializer
 
     def get(self, request):
         """Allow GET so browser/health checks get 200 instead of 401 from another route."""
         return Response(
-            {'message': 'W-9 webhook endpoint. Use POST with TaxZerone payload (form_w9_id, status, email_address, etc.).'},
+            {'message': 'W-9 webhook endpoint. Use POST with TaxZerone payload (form_w9_id, status, email_address, etc.). Use the form below to submit.'},
             status=status.HTTP_200_OK
         )
 
     def post(self, request):
+        # request.data is already parsed from JSON or form; pass through to callback
         return ProfileViewSet.w9_callback(ProfileViewSet(), request)
 
 

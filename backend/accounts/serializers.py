@@ -1090,6 +1090,40 @@ class SmokeSignalSerializer(serializers.ModelSerializer):
 # ══════════════════════════════════════════════════════════════════════
 
 # ══════════════════════════════════════════════════════════════════════
+# W-9 WEBHOOK (TaxZerone callback) – form-friendly input
+# https://sandbox.taxzerone.com/docs/#description/webhook-endpoint-requirements
+# ══════════════════════════════════════════════════════════════════════
+
+class W9WebhookInputSerializer(serializers.Serializer):
+    """Accepts W-9 webhook payload as JSON or form (all fields optional for flexibility)."""
+    form_w9_id = serializers.CharField(required=False, allow_blank=True, help_text="Unique identifier of the W-9 form (required for matching)")
+    filer_id = serializers.CharField(required=False, allow_blank=True)
+    status = serializers.CharField(required=False, allow_blank=True, help_text="Pending | Completed")
+    filer_type_id = serializers.CharField(required=False, allow_blank=True)
+    entity_name = serializers.CharField(required=False, allow_blank=True)
+    dba_name = serializers.CharField(required=False, allow_blank=True)
+    tin_type = serializers.CharField(required=False, allow_blank=True)
+    email_address = serializers.EmailField(required=False, allow_blank=True, help_text="Used to match creator if form_w9_id not found")
+    tin = serializers.CharField(required=False, allow_blank=True)
+    exempt_payee_cd = serializers.CharField(required=False, allow_blank=True)
+    name = serializers.CharField(required=False, allow_blank=True)
+    fatca_cd = serializers.CharField(required=False, allow_blank=True)
+    is_foreign_address = serializers.CharField(required=False, allow_blank=True)
+    us_address = serializers.CharField(required=False, allow_blank=True, help_text="JSON string or leave blank")
+    pdf_path = serializers.CharField(required=False, allow_blank=True)
+    signature = serializers.CharField(required=False, allow_blank=True)
+    signature_date = serializers.CharField(required=False, allow_blank=True)
+    tax_classification = serializers.CharField(required=False, allow_blank=True)
+    have_foreign_partners = serializers.CharField(required=False, allow_blank=True)
+    # Legacy/alternate keys we also accept
+    uniqueid = serializers.CharField(required=False, allow_blank=True)
+    unique_id = serializers.CharField(required=False, allow_blank=True)
+    payee_ref = serializers.CharField(required=False, allow_blank=True)
+    payeeRef = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # AGE VERIFICATION SERIALIZERS
 # ══════════════════════════════════════════════════════════════════════
 
