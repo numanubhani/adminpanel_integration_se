@@ -371,6 +371,12 @@ class ProfileViewSet(viewsets.ModelViewSet):
     queryset = Profile.objects.all().select_related('user')
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        """W-9 webhook callback must allow unauthenticated POSTs from TaxZerone."""
+        if self.action == 'w9_callback':
+            return [AllowAny()]
+        return [perm() for perm in self.permission_classes]
     
     def get_queryset(self):
         """Filter profiles based on user permissions"""
