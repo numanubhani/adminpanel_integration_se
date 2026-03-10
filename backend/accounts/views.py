@@ -7,6 +7,8 @@ from rest_framework import status, permissions, viewsets, decorators
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.parsers import JSONParser, FormParser
+from rest_framework.exceptions import ParseError
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse, OpenApiParameter
 from datetime import timedelta
@@ -1015,7 +1017,14 @@ class ProfileViewSet(viewsets.ModelViewSet):
         try:
             # TaxZerone updated webhook fields: https://sandbox.taxzerone.com/docs/#description/webhook-endpoint-requirements
             # Key fields: form_w9_id, status ("Pending"|"Completed"), email_address, name, tin_type, etc.
-            payload = request.data if isinstance(request.data, dict) else {}
+            raw = request.data
+            payload = raw if isinstance(raw, dict) else (dict(raw) if hasattr(raw, 'keys') else {})
+        except (ParseError, json.JSONDecodeError, ValueError, AttributeError) as e:
+            return Response(
+                {"error": "Invalid or empty request body. Send JSON or form data with form_w9_id and status."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
             logger.info("W-9 webhook payload: %s", payload)
 
             unique_id = (
@@ -1108,11 +1117,11 @@ class W9WebhookView(APIView):
     Standalone webhook endpoint for TaxZerone W-9 callbacks.
     No authentication required (TaxZerone POSTs without credentials).
     URL: /api/accounts/profile/w9/callback/
-    Accepts JSON or form (application/x-www-form-urlencoded).
-    Browsable API shows a form so you can fill and submit fields easily.
+    Accepts JSON or form (application/x-www-form-urlencoded). No multipart.
     """
     permission_classes = [AllowAny]
     authentication_classes = []  # No auth; webhook is called by TaxZerone without credentials
+    parser_classes = [JSONParser, FormParser]  # Avoid multipart parse error (invalid boundary)
     serializer_class = W9WebhookInputSerializer
 
     def get_serializer_class(self):
@@ -1126,7 +1135,15 @@ class W9WebhookView(APIView):
         )
 
     def post(self, request):
-        # request.data is already parsed from JSON or form; pass through to callback
+        try:
+            body = request.data
+        except (ParseError, json.JSONDecodeError, ValueError) as e:
+            return Response(
+                {
+                    "error": "Invalid or empty body. Send JSON (Content-Type: application/json) with e.g. {\"form_w9_id\":\"...\", \"status\":\"Completed\", \"email_address\":\"...\"} or use form data.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return ProfileViewSet.w9_callback(ProfileViewSet(), request)
 
 
